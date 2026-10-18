@@ -497,21 +497,9 @@
             d.device_id === device_id || 
             (d.name && d.name.toLowerCase().includes((device_id || '').toLowerCase()))
           );
-          if (target && target.lat !== undefined && target.lon !== undefined) {
-            const rKm = Number(target.bubble_radius_km || 25);
-            const altM = Math.max(15000, rKm * 2500);
-            await handleCommand({
-              action: 'fly_to_coordinate',
-              params: {
-                lat: target.lat,
-                lon: target.lon,
-                altitude_m: altM,
-                pitch_deg: -89.9,
-                heading_deg: 0,
-                duration_s: 2.5
-              }
-            });
-            result = { flying_to: target.device_id, name: target.name, lat: target.lat, lon: target.lon };
+          if (target) {
+            await trackEscortVehicle(target.device_id);
+            result = { tracking: target.device_id, name: target.name, lat: target.lat, lon: target.lon };
           } else {
             result = { error: `Escort device '${device_id}' not found in active cache` };
           }
@@ -938,159 +926,7 @@
   }
 
   let cachedEscortDevices = [];
-
-  async function renderEscortBubbles(devices) {
-    if (devices && Array.isArray(devices)) {
-      cachedEscortDevices = devices;
-    }
-    // 1. Immediately render on-screen HUD (zero Cesium dependency)
-    renderEscortHud(cachedEscortDevices);
-
-    const viewer = await waitForViewer(12000);
-    const { gev, Cesium } = getCesiumGlobals();
-    if (!viewer) return;
-
-    // Clear existing escort entities directly on viewer.entities
-    if (viewer.entities) {
-      const toRemove = viewer.entities.values
-        .filter(e => typeof e.id === 'string' && e.id.startsWith(ESCORT_PREFIX))
-        .map(e => e.id);
-      for (const id of toRemove) {
-        viewer.entities.removeById(id);
-      }
-    }
-
-    for (const dev of cachedEscortDevices) {
-      if (dev.lat === undefined || dev.lon === undefined) continue;
-      const radiusKm = dev.bubble_radius_km || 25.0;
-      const radiusMeters = radiusKm * 1000.0;
-      const center = Cesium.Cartesian3.fromDegrees(dev.lon, dev.lat, dev.altitude_m || 0);
-
-      // Status color scheme: SAFE (emerald neon), ADVISORY (tactical amber), ALERT (crimson red)
-      const status = (dev.status || 'SAFE').toUpperCase();
-      let statusColorHex = '#00ff88';
-      let fillRgba = 'rgba(0, 255, 136, 0.08)';
-      let statusBadge = '🛡️ SAFE';
-
-      if (status === 'ALERT') {
-        statusColorHex = '#ff3366';
-        fillRgba = 'rgba(255, 51, 102, 0.15)';
-        statusBadge = '🚨 CRITICAL ALERT';
-      } else if (status === 'ADVISORY') {
-        statusColorHex = '#ffaa00';
-        fillRgba = 'rgba(255, 170, 0, 0.12)';
-        statusBadge = '⚠️ ADVISORY';
-      }
-
-      // Tactical icon
-      const typeStr = (dev.device_type || '').toLowerCase();
-      const nameStr = (dev.name || '').toLowerCase();
-      let icon = '👤';
-      if (typeStr.includes('vehicle') || nameStr.includes('car') || nameStr.includes('convoy') || nameStr.includes('suv') || nameStr.includes('truck')) {
-        icon = '🚙';
-      } else if (typeStr.includes('drone') || typeStr.includes('uav')) {
-        icon = '🛸';
-      } else if (typeStr.includes('vessel') || typeStr.includes('boat')) {
-        icon = '🚤';
-      } else if (typeStr.includes('vip')) {
-        icon = '👑';
-      }
-
-      const outerPositions = computeCirclePositions(Cesium, dev.lon, dev.lat, radiusMeters, 72);
-
-      // 1. Ground-clamped tactical perimeter polyline ring (Guaranteed to render on 3D tiles & terrain)
-      if (outerPositions.length > 2) {
-        viewer.entities.add({
-          id: `${ESCORT_PREFIX}ring_${dev.device_id}`,
-          name: `Guardian Boundary: ${dev.name}`,
-          polyline: {
-            positions: outerPositions,
-            clampToGround: true,
-            width: 4,
-            material: Cesium.Color?.fromCssColorString ? Cesium.Color.fromCssColorString(statusColorHex) : statusColorHex,
-          },
-        });
-
-        // 2. Translucent geofence fill
-        viewer.entities.add({
-          id: `${ESCORT_PREFIX}fill_${dev.device_id}`,
-          name: `Guardian Fill: ${dev.name}`,
-          polygon: {
-            hierarchy: outerPositions,
-            material: Cesium.Color?.fromCssColorString ? Cesium.Color.fromCssColorString(fillRgba) : fillRgba,
-            classificationType: Cesium.ClassificationType?.BOTH ?? 2,
-          },
-        });
-      }
-
-      // 3. Tactical Inner Buffer Ring (5km proximity danger zone)
-      const innerBufferMeters = Math.min(5000.0, radiusMeters * 0.35);
-      const innerPositions = computeCirclePositions(Cesium, dev.lon, dev.lat, innerBufferMeters, 48);
-      if (innerPositions.length > 2) {
-        viewer.entities.add({
-          id: `${ESCORT_PREFIX}inner_${dev.device_id}`,
-          polyline: {
-            positions: innerPositions,
-            clampToGround: true,
-            width: 2,
-            material: Cesium.Color?.fromCssColorString ? Cesium.Color.fromCssColorString(statusColorHex).withAlpha(0.6) : statusColorHex,
-          },
-        });
-      }
-
-      // 4. Vertical 4,000m Tactical Light Pillar (visible from high orbit / any angle)
-      viewer.entities.add({
-        id: `${ESCORT_PREFIX}pillar_${dev.device_id}`,
-        polyline: {
-          positions: [
-            Cesium.Cartesian3.fromDegrees(dev.lon, dev.lat, 0),
-            Cesium.Cartesian3.fromDegrees(dev.lon, dev.lat, 4000),
-          ],
-          width: 3,
-          material: Cesium.Color?.fromCssColorString ? Cesium.Color.fromCssColorString(statusColorHex).withAlpha(0.85) : statusColorHex,
-        },
-      });
-
-      // 5. Center Tactical Point Marker
-      viewer.entities.add({
-        id: `${ESCORT_PREFIX}point_${dev.device_id}`,
-        position: center,
-        point: {
-          pixelSize: 16,
-          color: Cesium.Color?.fromCssColorString ? Cesium.Color.fromCssColorString(statusColorHex) : statusColorHex,
-          outlineColor: Cesium.Color?.BLACK || '#000000',
-          outlineWidth: 3,
-          heightReference: Cesium.HeightReference?.CLAMP_TO_GROUND ?? 1,
-          disableDepthTestDistance: Number.POSITIVE_INFINITY,
-        },
-      });
-
-      // 6. Center Tactical HUD Badge Label
-      const threatCount = dev.threat_count || (dev.active_threats ? dev.active_threats.length : 0);
-      viewer.entities.add({
-        id: `${ESCORT_PREFIX}label_${dev.device_id}`,
-        position: center,
-        label: {
-          text: `${icon} ${dev.name.toUpperCase()} [${radiusKm}km BUBBLE]\nStatus: ${statusBadge} | Threats: ${threatCount}\nPos: ${dev.lat.toFixed(4)}, ${dev.lon.toFixed(4)}`,
-          font: 'bold 13px monospace',
-          fillColor: Cesium.Color?.fromCssColorString ? Cesium.Color.fromCssColorString(statusColorHex) : statusColorHex,
-          outlineColor: Cesium.Color?.BLACK || '#000000',
-          outlineWidth: 4,
-          style: Cesium.LabelStyle?.FILL_AND_OUTLINE ?? 2,
-          verticalOrigin: Cesium.VerticalOrigin?.BOTTOM ?? 1,
-          pixelOffset: new Cesium.Cartesian2(0, -22),
-          heightReference: Cesium.HeightReference?.CLAMP_TO_GROUND ?? 1,
-          disableDepthTestDistance: Number.POSITIVE_INFINITY,
-          distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 10000000),
-        },
-      });
-    }
-
-    gev?.requestRender?.('escort-bubbles-rendered');
-    viewer.scene?.requestRender?.();
-    renderEscortHud(cachedEscortDevices);
-    console.log(`%c[GodsEyeSidecar]%c Rendered ${cachedEscortDevices.length} Escort Guardian Bubble(s) directly on viewer.entities.`, 'color: #00ff88; font-weight: bold;', 'color: inherit;');
-  }
+  const trackedTrafficVehicles = new Map();
 
   function normalizeVehicleId(rawId) {
     if (!rawId) return '';
@@ -1170,6 +1006,51 @@
     return found;
   }
 
+  function getLiveVehicleCartesian(rawDeviceId) {
+    const { viewer, Cesium } = getCesiumGlobals();
+    const deviceId = normalizeVehicleId(rawDeviceId);
+    const numId = getNumericVehicleId(deviceId);
+    const tracked = trackedTrafficVehicles.get(deviceId) ||
+                    (numId ? trackedTrafficVehicles.get(numId) : null);
+
+    // 1. Direct fast-path: read cached dot reference (updated at 60 FPS by traffic layer)
+    if (tracked?.dotRef && tracked.dotRef.point?.position && !tracked.dotRef.recycle) {
+      const pos = tracked.dotRef.point.position;
+      if (Cesium?.Cartesian3?.clone) {
+        tracked.lastCartesian = Cesium.Cartesian3.clone(pos, tracked.lastCartesian || new Cesium.Cartesian3());
+      } else {
+        tracked.lastCartesian = pos;
+      }
+      return tracked.lastCartesian;
+    }
+
+    // 2. Search traffic layer for matching dot
+    const dot = findTrafficDot(deviceId);
+    if (dot && dot.point?.position) {
+      if (tracked) {
+        tracked.dotRef = dot;
+        if (Cesium?.Cartesian3?.clone) {
+          tracked.lastCartesian = Cesium.Cartesian3.clone(dot.point.position, tracked.lastCartesian || new Cesium.Cartesian3());
+        } else {
+          tracked.lastCartesian = dot.point.position;
+        }
+      }
+      return dot.point.position;
+    }
+
+    // 3. Fallback to last known moving position
+    if (tracked?.lastCartesian) {
+      return tracked.lastCartesian;
+    }
+
+    // 4. Fallback to device coordinates
+    const dev = cachedEscortDevices.find(d => d.device_id === rawDeviceId || normalizeVehicleId(d.device_id) === deviceId);
+    if (dev && dev.lat !== undefined && dev.lon !== undefined && Cesium?.Cartesian3) {
+      return Cesium.Cartesian3.fromDegrees(dev.lon, dev.lat, dev.altitude_m || 0);
+    }
+    return null;
+  }
+
   function getActiveTrafficVehiclesSample(limit = 6) {
     const { gev } = getCesiumGlobals();
     const trafficLayer = gev?.dataManager?.layers?.get ? gev.dataManager.layers.get('traffic') : gev?.dataManager?.layers?.traffic;
@@ -1205,7 +1086,253 @@
     return sample;
   }
 
-  const trackedTrafficVehicles = new Map();
+  async function renderEscortBubbles(devices) {
+    if (devices && Array.isArray(devices)) {
+      cachedEscortDevices = devices;
+    }
+    // Immediately render on-screen HUD
+    renderEscortHud(cachedEscortDevices);
+
+    const viewer = await waitForViewer(12000);
+    const { gev, Cesium } = getCesiumGlobals();
+    if (!viewer || !Cesium) return;
+
+    // 1. Remove ONLY entities for devices that have been deleted/untagged
+    // This preserves existing entities so viewer.trackedEntity camera lock is NOT broken!
+    const activeDevIds = new Set(cachedEscortDevices.map(d => d.device_id));
+    if (viewer.entities) {
+      const toRemove = viewer.entities.values
+        .filter(e => typeof e.id === 'string' && e.id.startsWith(ESCORT_PREFIX))
+        .filter(e => {
+          const rawId = e.id.slice(ESCORT_PREFIX.length);
+          const parts = rawId.split('_');
+          const devId = parts.slice(1).join('_');
+          return devId && !activeDevIds.has(devId);
+        })
+        .map(e => e.id);
+
+      for (const id of toRemove) {
+        if (viewer.trackedEntity?.id === id) {
+          viewer.trackedEntity = undefined;
+        }
+        viewer.entities.removeById(id);
+      }
+    }
+
+    for (const dev of cachedEscortDevices) {
+      if (dev.lat === undefined || dev.lon === undefined) continue;
+      const radiusKm = dev.bubble_radius_km || 15.0;
+      const radiusMeters = radiusKm * 1000.0;
+      const status = (dev.status || 'SAFE').toUpperCase();
+      let statusColorHex = '#00ff88';
+      let fillRgba = 'rgba(0, 255, 136, 0.08)';
+      let statusBadge = '🛡️ SAFE';
+
+      if (status === 'ALERT') {
+        statusColorHex = '#ff3366';
+        fillRgba = 'rgba(255, 51, 102, 0.15)';
+        statusBadge = '🚨 CRITICAL ALERT';
+      } else if (status === 'ADVISORY') {
+        statusColorHex = '#ffaa00';
+        fillRgba = 'rgba(255, 170, 0, 0.12)';
+        statusBadge = '⚠️ ADVISORY';
+      }
+
+      const typeStr = (dev.device_type || '').toLowerCase();
+      const nameStr = (dev.name || '').toLowerCase();
+      let icon = '👤';
+      if (typeStr.includes('vehicle') || nameStr.includes('car') || nameStr.includes('convoy') || nameStr.includes('suv') || nameStr.includes('truck') || nameStr.includes('veh')) {
+        icon = '🚙';
+      } else if (typeStr.includes('drone') || typeStr.includes('uav')) {
+        icon = '🛸';
+      } else if (typeStr.includes('vessel') || typeStr.includes('boat')) {
+        icon = '🚤';
+      } else if (typeStr.includes('vip')) {
+        icon = '👑';
+      }
+
+      // Live Position Callback: Evaluated every frame for real-time kinematic follow
+      const livePositionCallback = new Cesium.CallbackProperty((time, result) => {
+        const livePos = getLiveVehicleCartesian(dev.device_id);
+        if (livePos) {
+          if (result && Cesium.Cartesian3?.clone) {
+            return Cesium.Cartesian3.clone(livePos, result);
+          }
+          return livePos;
+        }
+        return Cesium.Cartesian3.fromDegrees(dev.lon, dev.lat, dev.altitude_m || 0);
+      }, false);
+
+      const center = Cesium.Cartesian3.fromDegrees(dev.lon, dev.lat, dev.altitude_m || 0);
+      const outerPositions = computeCirclePositions(Cesium, dev.lon, dev.lat, radiusMeters, 72);
+      const innerBufferMeters = Math.min(5000.0, radiusMeters * 0.35);
+      const innerPositions = computeCirclePositions(Cesium, dev.lon, dev.lat, innerBufferMeters, 48);
+
+      // 1. Boundary Ring Entity
+      let ringEnt = viewer.entities.getById(`${ESCORT_PREFIX}ring_${dev.device_id}`);
+      if (!ringEnt && outerPositions.length > 2) {
+        ringEnt = viewer.entities.add({
+          id: `${ESCORT_PREFIX}ring_${dev.device_id}`,
+          name: `Guardian Boundary: ${dev.name}`,
+          polyline: {
+            positions: outerPositions,
+            clampToGround: true,
+            width: 4,
+            material: Cesium.Color?.fromCssColorString ? Cesium.Color.fromCssColorString(statusColorHex) : statusColorHex,
+          },
+        });
+      } else if (ringEnt) {
+        if (ringEnt.polyline) {
+          ringEnt.polyline.material = Cesium.Color?.fromCssColorString ? Cesium.Color.fromCssColorString(statusColorHex) : statusColorHex;
+        }
+      }
+
+      // 2. Geofence Fill Entity
+      let fillEnt = viewer.entities.getById(`${ESCORT_PREFIX}fill_${dev.device_id}`);
+      if (!fillEnt && outerPositions.length > 2) {
+        fillEnt = viewer.entities.add({
+          id: `${ESCORT_PREFIX}fill_${dev.device_id}`,
+          name: `Guardian Fill: ${dev.name}`,
+          polygon: {
+            hierarchy: outerPositions,
+            material: Cesium.Color?.fromCssColorString ? Cesium.Color.fromCssColorString(fillRgba) : fillRgba,
+            classificationType: Cesium.ClassificationType?.BOTH ?? 2,
+          },
+        });
+      }
+
+      // 3. Inner Buffer Ring Entity
+      let innerEnt = viewer.entities.getById(`${ESCORT_PREFIX}inner_${dev.device_id}`);
+      if (!innerEnt && innerPositions.length > 2) {
+        innerEnt = viewer.entities.add({
+          id: `${ESCORT_PREFIX}inner_${dev.device_id}`,
+          polyline: {
+            positions: innerPositions,
+            clampToGround: true,
+            width: 2,
+            material: Cesium.Color?.fromCssColorString ? Cesium.Color.fromCssColorString(statusColorHex).withAlpha(0.6) : statusColorHex,
+          },
+        });
+      }
+
+      // 4. Vertical 4,000m Tactical Light Pillar Entity (Live Position)
+      const pillarPositionsCallback = new Cesium.CallbackProperty((time, result) => {
+        const livePos = getLiveVehicleCartesian(dev.device_id);
+        const base = livePos || Cesium.Cartesian3.fromDegrees(dev.lon, dev.lat, 0);
+        const ellipsoid = viewer.scene.globe.ellipsoid;
+        const normal = ellipsoid ? ellipsoid.geodeticSurfaceNormal(base) : { x: 0, y: 0, z: 1 };
+        const top = Cesium.Cartesian3.add(
+          base,
+          Cesium.Cartesian3.multiplyByScalar(normal, 4000.0, new Cesium.Cartesian3()),
+          new Cesium.Cartesian3()
+        );
+        return [base, top];
+      }, false);
+
+      let pillarEnt = viewer.entities.getById(`${ESCORT_PREFIX}pillar_${dev.device_id}`);
+      if (!pillarEnt) {
+        pillarEnt = viewer.entities.add({
+          id: `${ESCORT_PREFIX}pillar_${dev.device_id}`,
+          polyline: {
+            positions: pillarPositionsCallback,
+            width: 3,
+            material: Cesium.Color?.fromCssColorString ? Cesium.Color.fromCssColorString(statusColorHex).withAlpha(0.85) : statusColorHex,
+          },
+        });
+      }
+
+      // 5. Center Tactical Point Marker (Attached to real-time kinematic position for camera tracking)
+      let pointEnt = viewer.entities.getById(`${ESCORT_PREFIX}point_${dev.device_id}`);
+      if (!pointEnt) {
+        pointEnt = viewer.entities.add({
+          id: `${ESCORT_PREFIX}point_${dev.device_id}`,
+          name: `Guardian Point: ${dev.name}`,
+          position: livePositionCallback,
+          trackingReferenceFrame: Cesium.TrackingReferenceFrame?.ENU,
+          viewFrom: new Cesium.Cartesian3(0, -600, 1000),
+          point: {
+            pixelSize: 16,
+            color: Cesium.Color?.fromCssColorString ? Cesium.Color.fromCssColorString(statusColorHex) : statusColorHex,
+            outlineColor: Cesium.Color?.BLACK || '#000000',
+            outlineWidth: 3,
+            heightReference: Cesium.HeightReference?.CLAMP_TO_GROUND ?? 1,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          },
+        });
+      }
+
+      // 6. Center Tactical HUD Badge Label (Live Position)
+      const threatCount = dev.threat_count || (dev.active_threats ? dev.active_threats.length : 0);
+      let labelEnt = viewer.entities.getById(`${ESCORT_PREFIX}label_${dev.device_id}`);
+      const labelText = `${icon} ${dev.name.toUpperCase()} [${radiusKm}km BUBBLE]\nStatus: ${statusBadge} | Threats: ${threatCount}\nPos: ${dev.lat.toFixed(4)}, ${dev.lon.toFixed(4)}`;
+      if (!labelEnt) {
+        labelEnt = viewer.entities.add({
+          id: `${ESCORT_PREFIX}label_${dev.device_id}`,
+          position: livePositionCallback,
+          label: {
+            text: labelText,
+            font: 'bold 13px monospace',
+            fillColor: Cesium.Color?.fromCssColorString ? Cesium.Color.fromCssColorString(statusColorHex) : statusColorHex,
+            outlineColor: Cesium.Color?.BLACK || '#000000',
+            outlineWidth: 4,
+            style: Cesium.LabelStyle?.FILL_AND_OUTLINE ?? 2,
+            verticalOrigin: Cesium.VerticalOrigin?.BOTTOM ?? 1,
+            pixelOffset: new Cesium.Cartesian2(0, -22),
+            heightReference: Cesium.HeightReference?.CLAMP_TO_GROUND ?? 1,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+            distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 10000000),
+          },
+        });
+      } else if (labelEnt.label) {
+        labelEnt.label.text = labelText;
+        labelEnt.label.fillColor = Cesium.Color?.fromCssColorString ? Cesium.Color.fromCssColorString(statusColorHex) : statusColorHex;
+      }
+    }
+
+    gev?.requestRender?.('escort-bubbles-rendered');
+    viewer.scene?.requestRender?.();
+    renderEscortHud(cachedEscortDevices);
+    console.log(`%c[GodsEyeSidecar]%c Synchronized ${cachedEscortDevices.length} Escort Guardian Bubble(s).`, 'color: #00ff88; font-weight: bold;', 'color: inherit;');
+  }
+
+  async function trackEscortVehicle(rawDeviceId) {
+    const deviceId = normalizeVehicleId(rawDeviceId);
+    const { viewer, Cesium, gev } = getCesiumGlobals();
+    if (!viewer) return;
+
+    // Ensure traffic layer is active so dots move
+    if (gev?.dataManager?.enableLayer) {
+      try { gev.dataManager.enableLayer('traffic'); } catch (e) {}
+    }
+
+    let pointEnt = viewer.entities.getById(`${ESCORT_PREFIX}point_${deviceId}`) ||
+                   viewer.entities.getById(`${ESCORT_PREFIX}point_${rawDeviceId}`);
+
+    if (!pointEnt) {
+      await renderEscortBubbles(cachedEscortDevices);
+      pointEnt = viewer.entities.getById(`${ESCORT_PREFIX}point_${deviceId}`) ||
+                 viewer.entities.getById(`${ESCORT_PREFIX}point_${rawDeviceId}`);
+    }
+
+    if (pointEnt) {
+      viewer.camera.cancelFlight();
+
+      // Configure chase camera offset (600m back, 1000m up in ENU frame)
+      if (Cesium.Cartesian3) {
+        pointEnt.viewFrom = new Cesium.Cartesian3(0, -600, 1000);
+      }
+
+      // Attach Cesium's trackedEntity camera lock
+      viewer.trackedEntity = pointEnt;
+      viewer.selectedEntity = pointEnt;
+
+      gev?.requestRender?.('copilot-track-vehicle');
+      viewer.scene?.requestRender?.();
+
+      updateTrackingHudState();
+      console.log(`%c[GodsEyeSidecar]%c Camera locked onto and continuously tracking vehicle: ${deviceId}`, 'color: #00ff88; font-weight: bold;', 'color: inherit;');
+    }
+  }
 
   async function tagTrafficVehicle(rawVehicleId, bubbleRadiusKm = 15.0, customName = null) {
     const vehicleId = normalizeVehicleId(rawVehicleId);
@@ -1248,6 +1375,8 @@
       lastLon: initialCoords.lon,
       lastAlt: initialCoords.alt || 0,
       lastPingTime: 0,
+      lastCartesian: dot?.point?.position ? (Cesium?.Cartesian3?.clone(dot.point.position, new Cesium.Cartesian3()) || dot.point.position) : null,
+      dotRef: dot || null,
     };
     trackedTrafficVehicles.set(vehicleId, record);
     if (numId) trackedTrafficVehicles.set(numId, record);
@@ -1293,23 +1422,11 @@
     // 5. Instantly refresh visual escort bubbles
     await syncEscortVisuals();
 
-    // 6. Fly camera directly to target vehicle with nadir top-down reconnaissance view
-    if (initialCoords && initialCoords.lat && initialCoords.lon) {
-      handleCommand({
-        action: 'fly_to_coordinate',
-        params: {
-          lat: initialCoords.lat,
-          lon: initialCoords.lon,
-          altitude_m: Math.max(12000, radius * 2200),
-          pitch_deg: -89.9,
-          heading_deg: 0,
-          duration_s: 2.0,
-        },
-      });
-    }
+    // 6. Lock camera directly onto moving vehicle for real-time tracking (just like flight tracking!)
+    await trackEscortVehicle(vehicleId);
 
     console.log(`%c[GodsEyeSidecar]%c Tagged traffic vehicle ${vehicleId} with ${radius}km Guardian Bubble at (${initialCoords.lat.toFixed(4)}, ${initialCoords.lon.toFixed(4)}).`, 'color: #00ff88; font-weight: bold;', 'color: inherit;');
-    return { ok: true, vehicle_id: vehicleId, name, radius_km: radius, initial_coords: initialCoords };
+    return { ok: true, vehicle_id: vehicleId, name, radius_km: radius, initial_coords: initialCoords, tracking: true };
   }
 
   async function untagEscortDevice(rawDeviceId) {
@@ -1336,13 +1453,17 @@
       }
     } catch (e) {}
 
-    // Clean up Cesium entities
+    // Clean up Cesium entities and detach camera tracking if this vehicle was tracked
     const { viewer, gev } = getCesiumGlobals();
     if (viewer?.entities) {
       const toRemove = viewer.entities.values
         .filter(e => typeof e.id === 'string' && (e.id.includes(deviceId) || e.id.includes(rawDeviceId)))
         .map(e => e.id);
+
       for (const id of toRemove) {
+        if (viewer.trackedEntity?.id === id) {
+          viewer.trackedEntity = undefined;
+        }
         viewer.entities.removeById(id);
       }
       gev?.requestRender?.('escort-bubble-removed');
@@ -1350,6 +1471,7 @@
     }
 
     await syncEscortVisuals();
+    updateTrackingHudState();
     return { ok: true, device_id: deviceId };
   }
 
@@ -1358,14 +1480,9 @@
     if (!viewer?.entities || !Cesium) return;
 
     const radiusMeters = radiusKm * 1000.0;
-    const center = Cesium.Cartesian3.fromDegrees(lon, lat, alt);
-    const groundCenter = Cesium.Cartesian3.fromDegrees(lon, lat, 0);
-
     const ringEnt = viewer.entities.getById(`${ESCORT_PREFIX}ring_${deviceId}`);
     const fillEnt = viewer.entities.getById(`${ESCORT_PREFIX}fill_${deviceId}`);
     const innerEnt = viewer.entities.getById(`${ESCORT_PREFIX}inner_${deviceId}`);
-    const pillarEnt = viewer.entities.getById(`${ESCORT_PREFIX}pillar_${deviceId}`);
-    const pointEnt = viewer.entities.getById(`${ESCORT_PREFIX}point_${deviceId}`);
     const labelEnt = viewer.entities.getById(`${ESCORT_PREFIX}label_${deviceId}`);
 
     if (ringEnt && fillEnt) {
@@ -1377,12 +1494,7 @@
       const innerPositions = computeCirclePositions(Cesium, lon, lat, innerBufferMeters, 48);
       if (innerEnt?.polyline) innerEnt.polyline.positions = innerPositions;
 
-      if (pillarEnt?.polyline) {
-        pillarEnt.polyline.positions = [groundCenter, Cesium.Cartesian3.fromDegrees(lon, lat, 4000)];
-      }
-      if (pointEnt) pointEnt.position = center;
       if (labelEnt) {
-        labelEnt.position = center;
         const currentText = labelEnt.label?.text?.getValue?.() || labelEnt.label?.text || '';
         const lines = String(currentText).split('\n');
         if (lines.length >= 3) {
@@ -1397,51 +1509,24 @@
       if (cached) {
         cached.lat = lat;
         cached.lon = lon;
-        const hudFlyBtn = document.querySelector(`.sidecar-hud-fly-btn[data-id="${deviceId}"]`);
-        if (hudFlyBtn) {
-          hudFlyBtn.setAttribute('data-lat', lat);
-          hudFlyBtn.setAttribute('data-lon', lon);
-        }
-      }
-    } else {
-      const cached = cachedEscortDevices.find(d => d.device_id === deviceId);
-      if (cached) {
-        cached.lat = lat;
-        cached.lon = lon;
-        renderEscortBubbles(cachedEscortDevices);
       }
     }
   }
 
-  // Continuous Kinematic Traffic Follower Loop (1.5s interval)
+  // Smooth real-time update loop (250ms) for sliding bubble & throttled GPS telemetry pings
   setInterval(() => {
     if (trackedTrafficVehicles.size === 0) return;
-    const { viewer, gev } = getCesiumGlobals();
+    const { viewer } = getCesiumGlobals();
     if (!viewer) return;
-
-    const trafficLayer = gev?.dataManager?.layers?.get ? gev.dataManager.layers.get('traffic') : gev?.dataManager?.layers?.traffic;
-    const module = trafficLayer?.module || trafficLayer;
-    if (!module || typeof module.visitMotionDots !== 'function') return;
-
-    const foundDots = new Map();
-    module.visitMotionDots((id, roadKey, point, road) => {
-      const num = Number(id);
-      for (const [key, tracked] of trackedTrafficVehicles.entries()) {
-        if (tracked.numId === num || tracked.vehicleId === `VEH-${id}` || tracked.vehicleId === String(id)) {
-          if (point?.position) {
-            foundDots.set(tracked.vehicleId, point.position);
-          }
-        }
-      }
-    });
 
     const now = Date.now();
     const processed = new Set();
+
     for (const tracked of trackedTrafficVehicles.values()) {
       if (processed.has(tracked.vehicleId)) continue;
       processed.add(tracked.vehicleId);
 
-      const pos = foundDots.get(tracked.vehicleId);
+      const pos = getLiveVehicleCartesian(tracked.vehicleId);
       if (!pos) continue;
 
       const coords = cartesianToLatLon(pos);
@@ -1449,15 +1534,17 @@
 
       const dLat = Math.abs(coords.lat - tracked.lastLat);
       const dLon = Math.abs(coords.lon - tracked.lastLon);
-      const moved = dLat > 0.00001 || dLon > 0.00001;
+      const moved = dLat > 0.000005 || dLon > 0.000005;
 
       tracked.lastLat = coords.lat;
       tracked.lastLon = coords.lon;
       tracked.lastAlt = coords.alt || 0;
 
+      // Update 15km perimeter circle positions smoothly
       updateEscortEntityPosition(tracked.vehicleId, coords.lat, coords.lon, coords.alt || 0, tracked.bubbleRadiusKm);
 
-      if (now - tracked.lastPingTime > 2500 || moved) {
+      // Throttled GPS ping for backend threat evaluation (every 2.5s)
+      if (now - tracked.lastPingTime > 2500 || (moved && now - tracked.lastPingTime > 1500)) {
         tracked.lastPingTime = now;
         try {
           const host = window.location.hostname || 'localhost';
@@ -1483,9 +1570,34 @@
         } catch (e) {}
       }
     }
-  }, 1500);
+  }, 250);
 
   let escortHudExpanded = true;
+
+  function updateTrackingHudState() {
+    const { viewer } = getCesiumGlobals();
+    const trackedId = viewer?.trackedEntity?.id || '';
+    const isEscortTracked = trackedId.startsWith(`${ESCORT_PREFIX}point_`);
+    const activeDevId = isEscortTracked ? trackedId.slice(`${ESCORT_PREFIX}point_`.length) : null;
+
+    const flyBtns = document.querySelectorAll('.sidecar-hud-fly-btn');
+    flyBtns.forEach(btn => {
+      const btnId = btn.getAttribute('data-id');
+      const isThisTracked = activeDevId && (btnId === activeDevId || normalizeVehicleId(btnId) === activeDevId);
+      if (isThisTracked) {
+        btn.textContent = '● TRACKING';
+        btn.style.background = '#00ffcc';
+        btn.style.boxShadow = '0 0 12px #00ffcc';
+        btn.style.color = '#000';
+      } else {
+        btn.textContent = 'FLY TO';
+        btn.style.boxShadow = 'none';
+        const color = btn.getAttribute('data-color') || '#00ff88';
+        btn.style.background = color;
+        btn.style.color = '#000';
+      }
+    });
+  }
 
   function renderEscortHud(devices) {
     let hud = document.getElementById('sidecar-escort-hud');
@@ -1568,7 +1680,7 @@
               ● ${dev.status || 'SAFE'} • ${dev.bubble_radius_km || 15}km bubble
             </div>
           </div>
-          <button class="sidecar-hud-fly-btn" data-id="${dev.device_id}" data-lat="${dev.lat}" data-lon="${dev.lon}" data-r="${dev.bubble_radius_km || 15}" style="
+          <button class="sidecar-hud-fly-btn" data-id="${dev.device_id}" data-color="${color}" style="
             background: ${color};
             border: none;
             color: #000;
@@ -1654,21 +1766,18 @@
 
     const flyBtns = hud.querySelectorAll('.sidecar-hud-fly-btn');
     flyBtns.forEach(btn => {
-      btn.onclick = () => {
-        const lat = Number(btn.getAttribute('data-lat'));
-        const lon = Number(btn.getAttribute('data-lon'));
-        const rKm = Number(btn.getAttribute('data-r'));
-        handleCommand({
-          action: 'fly_to_coordinate',
-          params: {
-            lat,
-            lon,
-            altitude_m: Math.max(12000, rKm * 2200),
-            pitch_deg: -89.9,
-            heading_deg: 0,
-            duration_s: 2.0,
-          },
-        });
+      btn.onclick = async () => {
+        const id = btn.getAttribute('data-id');
+        const { viewer } = getCesiumGlobals();
+        const trackedId = viewer?.trackedEntity?.id || '';
+        const isCurrentlyTracked = trackedId === `${ESCORT_PREFIX}point_${id}` || trackedId === `${ESCORT_PREFIX}point_${normalizeVehicleId(id)}`;
+
+        if (isCurrentlyTracked) {
+          viewer.trackedEntity = undefined;
+          updateTrackingHudState();
+        } else {
+          await trackEscortVehicle(id);
+        }
       };
     });
 
@@ -1742,6 +1851,8 @@
         });
       }
     }
+
+    updateTrackingHudState();
   }
 
   async function syncEscortVisuals() {
@@ -1768,6 +1879,16 @@
     });
   };
 
+  window.__godsEyeSidecarTrackVehicle = (vehicleId) => {
+    return trackEscortVehicle(vehicleId);
+  };
+
+  window.__godsEyeSidecarStopTracking = () => {
+    const { viewer } = getCesiumGlobals();
+    if (viewer) viewer.trackedEntity = undefined;
+    updateTrackingHudState();
+  };
+
   window.__godsEyeSidecarTagTrafficVehicle = (vehicleId, bubbleRadiusKm = 15.0, name = null) => {
     return tagTrafficVehicle(vehicleId, bubbleRadiusKm, name);
   };
@@ -1779,6 +1900,15 @@
   window.__godsEyeSidecarGetDetectedTrafficVehicles = (limit = 10) => {
     return getActiveTrafficVehiclesSample(limit);
   };
+
+  // Listen to Cesium trackedEntityChanged to reflect live camera lock in the HUD
+  waitForViewer(8000).then(v => {
+    if (v?.trackedEntityChanged?.addEventListener) {
+      v.trackedEntityChanged.addEventListener(() => {
+        updateTrackingHudState();
+      });
+    }
+  });
 
   // Periodic polling for dynamic moving bubbles
   setInterval(() => {

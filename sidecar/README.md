@@ -389,3 +389,29 @@ To guarantee **100% upstream project originality** without a single modification
 - **Behavior:** Upstream calls `server.restart()` 250ms after writing keys to `.env`.
 - **Sidecar Compatibility:** `proxy-tee` handles the transient 1-2 second connection drop via an `error` interceptor that returns `503 UPSTREAM_RESTARTING` rather than crashing the proxy process or dropping sockets abruptly.
 
+---
+
+## 8. Real-time Android GPS Tracking & Native Beacon App
+
+The Sentinel Escort Engine provides real-time sovereign tracking for physical Android devices, vehicles, VIPs, and convoys.
+
+### 1. Ultra-Lightweight Native Android Beacon (25 KB)
+A zero-bloat, standalone Android app compiled directly against the Android SDK:
+- **Download Route:** `http://<LAN_IP>:8080/sentinel-gps.apk` (or via the `/gps` beacon page)
+- **Background WakeLock:** Operates as a Foreground Service with `FOREGROUND_SERVICE_TYPE_LOCATION`, maintaining active telemetry transmission even when the phone screen is locked in a pocket.
+- **Battery Optimization Whitelist:** One-tap `[⚡ REQUEST UNRESTRICTED BATTERY]` triggers `ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`, preventing Android OS from suspending background pings.
+- **Dual-Mode Location Engine:** Concurrent satellite GPS (`GPS_PROVIDER`) and sub-second cellular/Wi-Fi (`NETWORK_PROVIDER`) fallback.
+- **Single Tactical Control:** Clean Start / Stop toggle with live readouts (Lat, Lon, Altitude, Speed, Bearing, Accuracy, Pings Sent).
+
+### 2. Browser GPS Beacon (`/gps`)
+- **HTTP (Port 8080):** `http://<LAN_IP>:8080/gps`
+- **HTTPS (Port 8443):** `https://<LAN_IP>:8443/gps` (Provides the W3C Secure Context required by mobile Chrome/Firefox for hardware GPS access).
+- **Two-Stage Acquisition:** Obtains instant network fix while locking high-precision satellite signals.
+
+### 3. Escort API Endpoints
+- `POST /api/escort/ping`: Native Android beacon and phone GPS telemetry ingestion.
+- `POST /api/escort/owntracks`: Native OwnTracks HTTP webhook support.
+- `GET /api/escort/devices`: Current active escort roster, positions, and threat statuses.
+- `POST /api/escort/tag`: Dynamic device registration with custom protective bubble radii.
+- `DELETE /api/escort/device/{id}`: Deregister an asset and tear down its Cesium visuals.
+

@@ -276,12 +276,42 @@ class PersonalEscortEngine:
                     for item in res[1]:
                         if isinstance(item, (list, tuple)) and len(item) >= 2:
                             ent_id = str(item[0])
+                            geo_raw = item[1]
+                            ent_lat, ent_lon = None, None
+                            if isinstance(geo_raw, str):
+                                try:
+                                    geo = json.loads(geo_raw)
+                                    if geo.get("type") == "Point" and "coordinates" in geo:
+                                        coords = geo["coordinates"]
+                                        ent_lon, ent_lat = float(coords[0]), float(coords[1])
+                                except Exception:
+                                    pass
+                            elif isinstance(geo_raw, (list, tuple)) and len(geo_raw) >= 2:
+                                ent_lat, ent_lon = float(geo_raw[0]), float(geo_raw[1])
+
+                            fields_dict = {}
+                            if len(item) > 2 and isinstance(item[2], (list, tuple)):
+                                flist = item[2]
+                                for fi in range(0, len(flist), 2):
+                                    if fi + 1 < len(flist):
+                                        fields_dict[str(flist[fi])] = flist[fi + 1]
+
+                            contact_alt = float(fields_dict.get("alt", 1200))
+                            contact_spd = float(fields_dict.get("spd", 0))
+                            contact_hdg = float(fields_dict.get("hdg", 0))
+
                             threats.append({
                                 "type": "LOW_AIR_INCURSION",
                                 "severity": "WARNING",
                                 "title": f"Low-Altitude Air Contact Over {dev.name}",
                                 "description": f"Flight {ent_id} operating within {r_km}km protective bubble at low altitude.",
                                 "contact_id": ent_id,
+                                "contact_lat": ent_lat,
+                                "contact_lon": ent_lon,
+                                "contact_alt": contact_alt,
+                                "contact_spd": contact_spd,
+                                "contact_hdg": contact_hdg,
+                                "layer": "flights",
                             })
             except Exception:
                 pass
@@ -507,6 +537,9 @@ class PersonalEscortEngine:
                     if threats and dev.status in ("ALERT", "ADVISORY"):
                         # Dispatch proactive alert to all channels
                         for t in threats:
+                            target_lat = t.get("contact_lat") if t.get("contact_lat") is not None else dev.lat
+                            target_lon = t.get("contact_lon") if t.get("contact_lon") is not None else dev.lon
+                            target_alt = t.get("contact_alt", 4000.0)
                             alert = TacticalAlert(
                                 severity=t.get("severity", "WARNING"),
                                 category="ESCORT_BUBBLE_BREACH",
@@ -514,9 +547,20 @@ class PersonalEscortEngine:
                                 message=f"Dynamic Protection Bubble for {dev.name} ({dev.device_id}) triggered alert: {t.get('description')}",
                                 aoi_id=f"escort_{dev.device_id}",
                                 aoi_name=f"Escort Bubble ({dev.name})",
-                                lat=dev.lat,
-                                lon=dev.lon,
-                                metadata={"device_id": dev.device_id, "device_type": dev.device_type}
+                                entity_id=t.get("contact_id"),
+                                lat=target_lat,
+                                lon=target_lon,
+                                metadata={
+                                    "device_id": dev.device_id,
+                                    "device_type": dev.device_type,
+                                    "contact_id": t.get("contact_id"),
+                                    "contact_lat": target_lat,
+                                    "contact_lon": target_lon,
+                                    "contact_alt": target_alt,
+                                    "layer": t.get("layer", "flights"),
+                                    "escort_lat": dev.lat,
+                                    "escort_lon": dev.lon,
+                                }
                             )
                             # Async dispatch
                             await dispatcher.dispatch(alert)

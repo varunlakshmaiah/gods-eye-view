@@ -368,12 +368,44 @@
         }
 
         case 'select_entity': {
-          const { entity_id, layer } = params;
-          window.dispatchEvent(new CustomEvent('sidecar:select-entity', { detail: { entity_id, layer } }));
-          window.dispatchEvent(new CustomEvent('gev:world-request-focus', { detail: { id: entity_id, layer } }));
+          const { entity_id, layer = 'flights' } = params;
+          const cleanId = String(entity_id || '').toLowerCase().trim();
+          let tracked = false;
+
+          // 1. Try layer-specific native tracking on dataManager
+          const targetLayer = gev?.dataManager?.layers?.get
+            ? gev.dataManager.layers.get(layer)
+            : gev?.dataManager?.layers?.[layer];
+          const module = targetLayer?.module || targetLayer;
+
+          if (typeof module?.trackById === 'function') {
+            try {
+              tracked = Boolean(module.trackById(cleanId, { origin: 'user' }));
+              console.log(`[GodsEyeSidecar] layer '${layer}' trackById('${cleanId}'):`, tracked);
+            } catch (err) {
+              console.warn('[GodsEyeSidecar] Error calling module.trackById:', err);
+            }
+          }
+
+          // 2. Also check if Cesium entities collection has an entity with this ID
+          if (!tracked && viewer?.entities) {
+            try {
+              const ent = viewer.entities.getById(entity_id) || viewer.entities.getById(cleanId);
+              if (ent) {
+                viewer.selectedEntity = ent;
+                viewer.trackedEntity = ent;
+                tracked = true;
+              }
+            } catch (e) {}
+          }
+
+          // 3. Dispatch standard custom events for HUD and reactive panels
+          window.dispatchEvent(new CustomEvent('sidecar:select-entity', { detail: { entity_id: cleanId, layer } }));
+          window.dispatchEvent(new CustomEvent('gev:world-request-focus', { detail: { id: cleanId, layer } }));
+
           gev?.requestRender?.('copilot-select-entity');
           viewer.scene?.requestRender?.();
-          result = { entity_id, layer, selected: true };
+          result = { entity_id: cleanId, layer, tracked, selected: true };
           break;
         }
 
@@ -579,7 +611,7 @@
         cursor: pointer;
         font-size: 11px;
         text-transform: uppercase;
-      ">FLY TO TARGET</button>` : ''}
+      ">${(alert.entity_id || alert.metadata?.contact_id) ? `FLY TO THREAT (${String(alert.entity_id || alert.metadata?.contact_id).toUpperCase()})` : 'FLY TO TARGET'}</button>` : ''}
       <button id="sidecar-close-btn" style="
         background: transparent;
         border: none;
@@ -597,11 +629,43 @@
 
     const flyBtn = document.getElementById('sidecar-fly-btn');
     if (flyBtn) {
-      flyBtn.onclick = () => {
-        handleCommand({
+      flyBtn.onclick = async () => {
+        const contactId = alert.entity_id || alert.metadata?.contact_id;
+        const layerId = alert.metadata?.layer || 'flights';
+        const contactAlt = alert.metadata?.contact_alt ? Number(alert.metadata.contact_alt) : 2500;
+        const targetAlt = Math.max(3500, contactAlt * 2.5);
+
+        // 1. Ensure the layer (e.g. flights) is visible
+        if (layerId) {
+          try {
+            await handleCommand({
+              action: 'toggle_layer',
+              params: { layer_id: layerId, enabled: true }
+            });
+          } catch (e) {}
+        }
+
+        // 2. Fly camera directly to target threat coordinate with dead-center nadir pitch
+        await handleCommand({
           action: 'fly_to_coordinate',
-          params: { lat: alert.lat, lon: alert.lon, altitude_m: 12000, duration: 2.5 }
+          params: {
+            lat: alert.lat,
+            lon: alert.lon,
+            altitude_m: targetAlt,
+            pitch_deg: -89.9,
+            heading_deg: 0,
+            duration_s: 2.0
+          }
         });
+
+        // 3. Select and track the threat entity natively in Cesium
+        if (contactId) {
+          await handleCommand({
+            action: 'select_entity',
+            params: { entity_id: contactId, layer: layerId }
+          });
+        }
+
         banner.remove();
       };
     }

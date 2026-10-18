@@ -169,6 +169,18 @@ class TripwireEngine:
                     for feat in features:
                         if isinstance(feat, list) and len(feat) >= 2:
                             ent_id = feat[0]
+                            feat_geo = feat[1]
+                            f_lat, f_lon = lat, lon
+                            if isinstance(feat_geo, str):
+                                try:
+                                    g = json.loads(feat_geo)
+                                    if g.get("type") == "Point" and "coordinates" in g:
+                                        f_lon, f_lat = float(g["coordinates"][0]), float(g["coordinates"][1])
+                                except Exception:
+                                    pass
+                            elif isinstance(feat_geo, (list, tuple)) and len(feat_geo) >= 2:
+                                f_lat, f_lon = float(feat_geo[0]), float(feat_geo[1])
+
                             cooldown_key = f"incursion_{aoi_id}_{ent_id}"
                             if not self._is_on_cooldown(cooldown_key):
                                 alert = TacticalAlert(
@@ -179,9 +191,16 @@ class TripwireEngine:
                                     aoi_id=aoi_id,
                                     aoi_name=aoi_name,
                                     entity_id=ent_id,
-                                    lat=lat,
-                                    lon=lon,
-                                    metadata={"aoi": aoi, "entity_id": ent_id}
+                                    lat=f_lat,
+                                    lon=f_lon,
+                                    metadata={
+                                        "aoi": aoi,
+                                        "entity_id": ent_id,
+                                        "contact_id": ent_id,
+                                        "contact_lat": f_lat,
+                                        "contact_lon": f_lon,
+                                        "layer": "flights"
+                                    }
                                 )
                                 await dispatcher.dispatch(alert)
             except Exception as e:

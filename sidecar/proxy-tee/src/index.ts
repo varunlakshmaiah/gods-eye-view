@@ -32,8 +32,6 @@ const heartbeatManager = new HeartbeatManager(UPSTREAM_URL, tile38Sink, timescal
 
 heartbeatManager.start();
 
-app.use(express.json());
-
 // ----------------------------------------------------------------------------
 // 1. Sidecar Status & Internal Routes
 // ----------------------------------------------------------------------------
@@ -55,7 +53,7 @@ app.get('/__sidecar/status', (_req: Request, res: Response) => {
   });
 });
 
-app.all(['/__sidecar/playback', '/api/replay'], (req: Request, res: Response) => {
+app.all(['/__sidecar/playback', '/api/replay'], express.json(), (req: Request, res: Response) => {
   if (req.method === 'GET') {
     res.json({ status: 'ok', current: playbackController.getMode() });
     return;
@@ -148,7 +146,7 @@ app.use(
     ws: true,
     selfHandleResponse: true, // Allows modifying HTML and inspecting API responses
     on: {
-      proxyReq: (proxyReq, req) => {
+      proxyReq: (proxyReq, req: any) => {
         proxyReq.removeHeader('x-forwarded-for');
         proxyReq.removeHeader('x-forwarded-host');
         proxyReq.removeHeader('x-forwarded-port');
@@ -159,6 +157,13 @@ app.use(
         proxyReq.setHeader('host', 'localhost:4173');
         if (req.headers.origin) {
           proxyReq.setHeader('origin', 'http://localhost:4173');
+        }
+
+        if (req.body && Object.keys(req.body).length > 0 && !proxyReq.writableEnded) {
+          const bodyData = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
+          proxyReq.setHeader('Content-Type', 'application/json');
+          proxyReq.setHeader('Content-Length', Buffer.byteLength(bodyData));
+          proxyReq.write(bodyData);
         }
       },
       proxyRes: responseInterceptor(async (responseBuffer, proxyRes, req, res) => {

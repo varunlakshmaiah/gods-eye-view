@@ -1718,8 +1718,8 @@
             </div>
             <span style="font-size: 8px; background: rgba(0,255,136,0.2); color: #00ff88; border: 1px solid #00ff88; padding: 1px 4px; border-radius: 3px; font-weight: bold;">LIVE BEACON</span>
           </div>
-          <div style="font-size: 9px; color: #8899aa; margin-bottom: 6px;">
-            Open on your Android phone to transmit live GPS:
+          <div style="font-size: 9px; color: #8899aa; margin-bottom: 4px;">
+            Open on Android phone (Chrome requires HTTPS for GPS):
           </div>
           <div id="sidecar-gps-url" style="
             font-size: 10px;
@@ -1730,8 +1730,11 @@
             border-radius: 4px;
             word-break: break-all;
             user-select: all;
-            margin-bottom: 6px;
-          ">http://${window.location.hostname || '192.168.20.120'}:8080/gps</div>
+            margin-bottom: 4px;
+          ">https://${window.location.hostname || '192.168.20.120'}:8443/gps</div>
+          <div style="font-size: 8px; color: #8899aa; margin-bottom: 6px;">
+            *(Tap "Advanced ➔ Proceed" for self-signed SSL)*
+          </div>
           <div style="display: flex; gap: 6px;">
             <button id="sidecar-copy-gps-btn" style="
               flex: 1;
@@ -1743,8 +1746,8 @@
               border-radius: 3px;
               cursor: pointer;
               font-weight: bold;
-            ">📋 COPY URL</button>
-            <a id="sidecar-open-gps-link" href="/gps" target="_blank" style="
+            ">📋 COPY HTTPS</button>
+            <a id="sidecar-open-gps-link" href="https://${window.location.hostname || '192.168.20.120'}:8443/gps" target="_blank" style="
               background: #00ffcc;
               color: #000;
               font-size: 9px;
@@ -1831,10 +1834,10 @@
     if (copyGpsBtn) {
       copyGpsBtn.onclick = () => {
         const host = window.location.hostname || '192.168.20.120';
-        const url = `http://${host}:8080/gps`;
+        const url = `https://${host}:8443/gps`;
         navigator.clipboard?.writeText?.(url);
         copyGpsBtn.textContent = '✓ COPIED!';
-        setTimeout(() => { copyGpsBtn.textContent = '📋 COPY URL'; }, 2000);
+        setTimeout(() => { copyGpsBtn.textContent = '📋 COPY HTTPS'; }, 2000);
       };
     }
 

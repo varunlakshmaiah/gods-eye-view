@@ -2,6 +2,7 @@ import express, { Request, Response, NextFunction } from 'express';
 import { createProxyMiddleware, responseInterceptor } from 'http-proxy-middleware';
 import path from 'node:path';
 import fs from 'node:fs';
+import https from 'node:https';
 import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
 
@@ -271,7 +272,39 @@ app.use(
   })
 );
 
+const HTTPS_PORT = parseInt(process.env.PROXY_HTTPS_PORT || '8443', 10);
+
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`[ProxyTee] Non-Invasive Reverse Proxy listening on 0.0.0.0:${PORT}`);
+  console.log(`[ProxyTee] HTTP Reverse Proxy listening on 0.0.0.0:${PORT}`);
   console.log(`[ProxyTee] Target Upstream: ${UPSTREAM_URL}`);
 });
+
+try {
+  const possibleCertPaths = [
+    path.resolve('/app/certs/cert.pem'),
+    path.resolve(__dirname, '../certs/cert.pem'),
+    path.resolve(process.cwd(), 'sidecar/proxy-tee/certs/cert.pem'),
+    path.resolve(process.cwd(), 'certs/cert.pem'),
+  ];
+  const possibleKeyPaths = [
+    path.resolve('/app/certs/key.pem'),
+    path.resolve(__dirname, '../certs/key.pem'),
+    path.resolve(process.cwd(), 'sidecar/proxy-tee/certs/key.pem'),
+    path.resolve(process.cwd(), 'certs/key.pem'),
+  ];
+
+  const certPath = possibleCertPaths.find((p) => fs.existsSync(p));
+  const keyPath = possibleKeyPaths.find((p) => fs.existsSync(p));
+
+  if (certPath && keyPath) {
+    const cert = fs.readFileSync(certPath);
+    const key = fs.readFileSync(keyPath);
+    https.createServer({ key, cert }, app).listen(HTTPS_PORT, '0.0.0.0', () => {
+      console.log(`[ProxyTee] HTTPS Secure Proxy listening on 0.0.0.0:${HTTPS_PORT} (for mobile GPS secure context)`);
+    });
+  } else {
+    console.log(`[ProxyTee] SSL certs not found; HTTPS proxy disabled.`);
+  }
+} catch (sslErr: any) {
+  console.warn(`[ProxyTee] Failed to start HTTPS listener: ${sslErr.message}`);
+}

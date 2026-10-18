@@ -54,15 +54,18 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8080:8080"
+      - "8443:8443"
     environment:
       - UPSTREAM_URL=http://upstream:4173
       - PROXY_PORT=8080
+      - PROXY_HTTPS_PORT=8443
       - TILE38_HOST=tile38
       - TILE38_PORT=9851
       - DATABASE_URL=postgresql://postgres:postgres@timescaledb:5432/gods_eye_sidecar
       - HEADLESS_ENABLED=true
     volumes:
       - ./sidecar/ui-bridge:/app/ui-bridge:ro
+      - ./sidecar/proxy-tee/certs:/app/certs:ro
     networks:
       sidecar_net:
         ipv4_address: 172.28.0.10

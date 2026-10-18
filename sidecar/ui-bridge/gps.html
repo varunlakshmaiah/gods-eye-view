@@ -165,6 +165,19 @@
       <span>🛡️</span> GOD'S EYE VIEW
     </div>
     <div id="status-badge" class="badge">OFFLINE</div>
+  <!-- Insecure Context Warning Banner -->
+  <div id="insecure-banner" style="display: none; background: rgba(255, 51, 102, 0.15); border: 1px solid #ff3366; border-radius: 8px; padding: 12px; margin-bottom: 14px;">
+    <div style="color: #ff3366; font-weight: bold; font-size: 13px; margin-bottom: 4px; display: flex; align-items: center; gap: 6px;">
+      <span>⚠️</span> BROWSER INSECURE CONTEXT (HTTP)
+    </div>
+    <div style="font-size: 11px; color: #ffccd5; line-height: 1.4; margin-bottom: 8px;">
+      Chrome on Android blocks hardware GPS on plain HTTP. Tap below to switch to Secure HTTPS (Port 8443) or use the simulation mode.
+    </div>
+    <div style="display: flex; gap: 8px;">
+      <a id="switch-https-btn" href="#" style="background: #ff3366; color: #fff; text-decoration: none; font-size: 11px; font-weight: bold; padding: 6px 12px; border-radius: 4px; display: inline-block;">
+        🔒 SWITCH TO HTTPS (PORT 8443)
+      </a>
+    </div>
   </div>
 
   <div class="card" id="config-card">
@@ -194,9 +207,14 @@
       <input type="number" id="bubble-radius" value="15" min="1" max="100">
     </div>
 
-    <button id="toggle-btn" class="btn btn-start">
-      <span>📡</span> START TRANSMITTING GPS
-    </button>
+    <div style="display: flex; gap: 8px;">
+      <button id="toggle-btn" class="btn btn-start" style="flex: 2;">
+        <span>📡</span> START TRANSMITTING GPS
+      </button>
+      <button id="sim-btn" class="btn" style="flex: 1.2; background: rgba(0, 255, 204, 0.2); border: 1px solid #00ffcc; color: #00ffcc; font-size: 12px;">
+        <span>🧪</span> SIMULATE
+      </button>
+    </div>
   </div>
 
   <div class="card" id="telemetry-card" style="display: none;">
@@ -239,15 +257,28 @@
     let watchId = null;
     let wakeLock = null;
     let isTransmitting = false;
+    let isSimulating = false;
+    let simInterval = null;
     let pingsSent = 0;
     let lastPingTime = 0;
     const PING_INTERVAL_MS = 1200;
 
     const toggleBtn = document.getElementById('toggle-btn');
+    const simBtn = document.getElementById('sim-btn');
     const badge = document.getElementById('status-badge');
     const telCard = document.getElementById('telemetry-card');
     const logBox = document.getElementById('log-box');
     const pingCounter = document.getElementById('ping-counter');
+    const insecureBanner = document.getElementById('insecure-banner');
+    const switchHttpsBtn = document.getElementById('switch-https-btn');
+
+    // Detect Secure Context (Required by Chrome Android for GPS)
+    const isSecure = window.isSecureContext || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+    if (!isSecure && location.protocol !== 'https:') {
+      insecureBanner.style.display = 'block';
+      const httpsUrl = `https://${location.hostname}:8443/gps`;
+      switchHttpsBtn.href = httpsUrl;
+    }
 
     function log(msg) {
       const time = new Date().toLocaleTimeString();
@@ -287,7 +318,7 @@
 
     async function transmitPing(pos) {
       const now = Date.now();
-      if (now - lastPingTime < PING_INTERVAL_MS) return;
+      if (!isSimulating && (now - lastPingTime < PING_INTERVAL_MS)) return;
       lastPingTime = now;
 
       const deviceId = document.getElementById('device-id').value.trim() || 'VIP-ANDROID-1';
@@ -316,7 +347,7 @@
           alt_m: alt,
           speed_kts: speedKts,
           heading_deg: heading,
-          source: 'android_mobile_beacon'
+          source: isSimulating ? 'android_mobile_sim' : 'android_mobile_beacon'
         };
 
         const res = await fetch('/api/escort/ping', {
@@ -328,7 +359,7 @@
         if (res.ok) {
           pingsSent++;
           pingCounter.textContent = `${pingsSent} PINGS SENT`;
-          log(`GPS ping #${pingsSent} sent (${lat.toFixed(5)}, ${lon.toFixed(5)}) acc: ±${Math.round(acc)}m`);
+          log(`${isSimulating ? '🧪 Sim' : '📡 GPS'} ping #${pingsSent} sent (${lat.toFixed(5)}, ${lon.toFixed(5)}) speed: ${speedKts.toFixed(1)}kts`);
         } else {
           log(`Ping failed: HTTP ${res.status}`);
         }
@@ -338,8 +369,16 @@
     }
 
     async function startTransmitting() {
+      if (!isSecure && location.protocol !== 'https:') {
+        const switchNow = confirm('Android Chrome blocks hardware GPS over insecure HTTP.\\n\\nTap OK to switch to HTTPS (Port 8443), or Cancel to use the SIMULATE button.');
+        if (switchNow) {
+          window.location.href = `https://${location.hostname}:8443/gps`;
+          return;
+        }
+      }
+
       if (!('geolocation' in navigator)) {
-        alert('Geolocation is not supported by your browser.');
+        alert('Geolocation API is not supported or was blocked by your browser.');
         return;
       }
 
@@ -355,23 +394,52 @@
       badge.textContent = 'TRANSMITTING';
       telCard.style.display = 'block';
 
-      log('Requesting high-accuracy GPS fix...');
+      log('Requesting GPS permission & high-accuracy fix...');
       await requestWakeLock();
       await registerAsset(deviceId, name, type, radius);
 
+      // Trigger initial prompt via getCurrentPosition
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          log('✅ GPS fix acquired!');
+          transmitPing(pos);
+        },
+        (err) => {
+          handleGpsError(err);
+        },
+        { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 }
+      );
+
+      // Continuous tracking watch
       watchId = navigator.geolocation.watchPosition(
         (pos) => {
           transmitPing(pos);
         },
         (err) => {
-          log(`GPS Error: ${err.message} (Code ${err.code})`);
+          handleGpsError(err);
         },
         {
           enableHighAccuracy: true,
-          maximumAge: 1000,
-          timeout: 10000
+          maximumAge: 2000,
+          timeout: 15000
         }
       );
+    }
+
+    function handleGpsError(err) {
+      let hint = '';
+      if (err.code === 1) {
+        if (!isSecure) {
+          hint = ' -> Insecure HTTP origin! Switch to https://...:8443/gps';
+        } else {
+          hint = ' -> Location permission denied. Please allow location in Android site settings.';
+        }
+      } else if (err.code === 2) {
+        hint = ' -> Location unavailable. Please enable Device Location (GPS) in phone quick settings.';
+      } else if (err.code === 3) {
+        hint = ' -> GPS acquisition timeout. Still searching for satellite lock...';
+      }
+      log(`❌ GPS Error [${err.code}]: ${err.message}${hint}`);
     }
 
     function stopTransmitting() {
@@ -391,11 +459,85 @@
       log('GPS transmission stopped by user');
     }
 
+    // --- Simulation Mode (Instant Zero-Config Testing) ---
+    async function startSimulation() {
+      const deviceId = document.getElementById('device-id').value.trim() || 'VIP-ANDROID-1';
+      const name = document.getElementById('asset-name').value.trim() || 'VIP Android Phone';
+      const type = document.getElementById('asset-type').value;
+      const radius = document.getElementById('bubble-radius').value || 15;
+
+      isSimulating = true;
+      simBtn.innerHTML = '<span>⏹️</span> STOP SIM';
+      simBtn.style.background = '#ff3366';
+      simBtn.style.color = '#fff';
+      badge.className = 'badge active';
+      badge.textContent = 'SIMULATING';
+      telCard.style.display = 'block';
+
+      log('Starting simulated vehicle telemetry path...');
+      await requestWakeLock();
+      await registerAsset(deviceId, name, type, radius);
+
+      // Sim base coordinates (Bangalore area)
+      let baseLat = 12.9716;
+      let baseLon = 77.5946;
+      let step = 0;
+
+      simInterval = setInterval(() => {
+        if (!isSimulating) return;
+        step++;
+        // Generate smooth circular path
+        const angle = (step * 3) * (Math.PI / 180);
+        const radiusDeg = 0.008; // ~800 meters
+        const curLat = baseLat + Math.sin(angle) * radiusDeg;
+        const curLon = baseLon + Math.cos(angle) * radiusDeg * 1.1;
+        const headingDeg = ((angle * 180 / Math.PI) + 90) % 360;
+        const speedMps = 12.5; // ~45 km/h (24 kts)
+
+        transmitPing({
+          coords: {
+            latitude: curLat,
+            longitude: curLon,
+            accuracy: 3.5,
+            altitude: 920.0,
+            speed: speedMps,
+            heading: headingDeg
+          }
+        });
+      }, 1200);
+    }
+
+    function stopSimulation() {
+      if (simInterval) {
+        clearInterval(simInterval);
+        simInterval = null;
+      }
+      isSimulating = false;
+      simBtn.innerHTML = '<span>🧪</span> SIMULATE';
+      simBtn.style.background = 'rgba(0, 255, 204, 0.2)';
+      simBtn.style.color = '#00ffcc';
+      if (!isTransmitting) {
+        badge.className = 'badge';
+        badge.textContent = 'OFFLINE';
+      }
+      log('Simulation stopped by user');
+    }
+
     toggleBtn.onclick = () => {
       if (!isTransmitting) {
+        if (isSimulating) stopSimulation();
         startTransmitting();
       } else {
         stopTransmitting();
+      }
+    };
+
+    simBtn.onclick = () => {
+      if (!isSimulating) {
+        if (isTransmitting) stopTransmitting();
+        startSimulation();
+      } else {
+        stopSimulation();
       }
     };
   </script>

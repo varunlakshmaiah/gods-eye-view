@@ -534,7 +534,8 @@
 
   async function syncAoiVisuals() {
     try {
-      const res = await fetch('http://localhost:8000/api/aois');
+      const host = window.location.hostname || 'localhost';
+      const res = await fetch(`http://${host}:8000/api/aois`);
       if (res.ok) {
         const data = await res.json();
         if (data.aois) {
@@ -680,7 +681,8 @@
 
   async function syncRadarVisuals() {
     try {
-      const res = await fetch('http://localhost:8000/api/radar/stations');
+      const host = window.location.hostname || 'localhost';
+      const res = await fetch(`http://${host}:8000/api/radar/stations`);
       if (res.ok) {
         const data = await res.json();
         if (data.stations) {
@@ -763,7 +765,7 @@
           outline: true,
           outlineColor: Cesium.Color.fromCssColorString(statusColorHex),
           outlineWidth: 2,
-          height: 0,
+          classificationType: Cesium.ClassificationType ? Cesium.ClassificationType.BOTH : undefined,
         },
       });
 
@@ -777,9 +779,9 @@
           semiMajorAxis: innerBufferMeters,
           material: Cesium.Color.TRANSPARENT,
           outline: true,
-          outlineColor: Cesium.Color.fromCssColorString(statusColorHex).withAlpha(0.35),
-          outlineWidth: 1,
-          height: 0,
+          outlineColor: Cesium.Color.fromCssColorString(statusColorHex).withAlpha(0.4),
+          outlineWidth: 1.5,
+          classificationType: Cesium.ClassificationType ? Cesium.ClassificationType.BOTH : undefined,
         },
       });
 
@@ -788,10 +790,12 @@
         id: `escort_point_${dev.device_id}`,
         position: center,
         point: {
-          pixelSize: 12,
+          pixelSize: 14,
           color: Cesium.Color.fromCssColorString(statusColorHex),
           outlineColor: Cesium.Color.BLACK,
           outlineWidth: 2,
+          heightReference: Cesium.HeightReference ? Cesium.HeightReference.CLAMP_TO_GROUND : undefined,
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
       });
 
@@ -802,26 +806,132 @@
         position: center,
         label: {
           text: `${icon} ${dev.name.toUpperCase()} [${radiusKm}km BUBBLE]\nStatus: ${statusBadge} | Threats: ${threatCount}\nPos: ${dev.lat.toFixed(4)}, ${dev.lon.toFixed(4)}`,
-          font: 'bold 11px monospace',
+          font: 'bold 12px monospace',
           fillColor: Cesium.Color.fromCssColorString(statusColorHex),
           outlineColor: Cesium.Color.BLACK,
           outlineWidth: 3,
           style: Cesium.LabelStyle.FILL_AND_OUTLINE,
           verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-          pixelOffset: new Cesium.Cartesian2(0, -16),
-          distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 6000000),
+          pixelOffset: new Cesium.Cartesian2(0, -18),
+          heightReference: Cesium.HeightReference ? Cesium.HeightReference.CLAMP_TO_GROUND : undefined,
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 10000000),
         },
       });
     }
 
     gev?.requestRender?.('escort-bubbles-rendered');
     viewer.scene?.requestRender?.();
+    renderEscortHud(cachedEscortDevices);
     console.log(`%c[GodsEyeSidecar]%c Rendered ${cachedEscortDevices.length} Escort Guardian Bubble(s) in 3D Cesium.`, 'color: #00ff88; font-weight: bold;', 'color: inherit;');
   }
 
+  function renderEscortHud(devices) {
+    let hud = document.getElementById('sidecar-escort-hud');
+    if (!devices || devices.length === 0) {
+      if (hud) hud.remove();
+      return;
+    }
+    if (!hud) {
+      hud = document.createElement('div');
+      hud.id = 'sidecar-escort-hud';
+      hud.style.cssText = `
+        position: fixed;
+        bottom: 24px;
+        right: 20px;
+        z-index: 99999;
+        background: rgba(10, 18, 30, 0.94);
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(0, 255, 136, 0.6);
+        border-radius: 8px;
+        padding: 12px 14px;
+        color: #fff;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.85), 0 0 16px rgba(0,255,136,0.3);
+        min-width: 290px;
+        max-width: 360px;
+        pointer-events: auto;
+      `;
+      document.body.appendChild(hud);
+    }
+
+    let html = `
+      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.12); padding-bottom: 6px;">
+        <div style="font-size: 12px; font-weight: bold; color: #00ff88; letter-spacing: 0.5px; display: flex; align-items: center; gap: 6px;">
+          <span>🛡️</span> GUARDIAN BUBBLES (${devices.length})
+        </div>
+        <div style="font-size: 9px; background: rgba(0,255,136,0.15); color: #00ff88; padding: 2px 6px; border-radius: 3px; font-weight: bold;">
+          LIVE
+        </div>
+      </div>
+    `;
+
+    for (const dev of devices) {
+      const isAlert = dev.status === 'ALERT';
+      const isAdv = dev.status === 'ADVISORY';
+      const color = isAlert ? '#ff3366' : (isAdv ? '#ffaa00' : '#00ff88');
+      const typeStr = (dev.device_type || '').toLowerCase();
+      const nameStr = (dev.name || '').toLowerCase();
+      const icon = (typeStr.includes('vehicle') || nameStr.includes('suv') || nameStr.includes('car') || nameStr.includes('convoy')) ? '🚙' : '👤';
+
+      html += `
+        <div style="margin-bottom: 8px; padding: 8px; background: rgba(255,255,255,0.05); border: 1px solid ${color}55; border-radius: 6px; display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+          <div style="flex: 1; min-width: 0;">
+            <div style="font-size: 11px; font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+              ${icon} ${dev.name}
+            </div>
+            <div style="font-size: 10px; color: ${color}; margin-top: 2px;">
+              ● ${dev.status || 'SAFE'} • ${dev.bubble_radius_km || 25}km bubble
+            </div>
+          </div>
+          <button class="sidecar-hud-fly-btn" data-lat="${dev.lat}" data-lon="${dev.lon}" data-r="${dev.bubble_radius_km || 25}" style="
+            background: ${color};
+            border: none;
+            color: #000;
+            font-weight: bold;
+            font-size: 10px;
+            padding: 5px 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            letter-spacing: 0.5px;
+            white-space: nowrap;
+          ">FLY TO</button>
+        </div>
+      `;
+    }
+
+    hud.innerHTML = html;
+
+    const btns = hud.querySelectorAll('.sidecar-hud-fly-btn');
+    btns.forEach(btn => {
+      btn.onclick = () => {
+        const lat = Number(btn.getAttribute('data-lat'));
+        const lon = Number(btn.getAttribute('data-lon'));
+        const rKm = Number(btn.getAttribute('data-r'));
+        handleCommand({
+          action: 'fly_to_coordinate',
+          params: {
+            lat,
+            lon,
+            altitude_m: Math.max(15000, rKm * 2500),
+            duration_s: 2.5
+          }
+        });
+      };
+    });
+  }
+
+  window.__godsEyeSidecarFlyTo = (lat, lon, alt = 45000) => {
+    handleCommand({
+      action: 'fly_to_coordinate',
+      params: { lat, lon, altitude_m: alt, duration_s: 2.5 }
+    });
+  };
+
   async function syncEscortVisuals() {
     try {
-      const res = await fetch('http://localhost:8000/api/escort/devices');
+      const host = window.location.hostname || 'localhost';
+      const res = await fetch(`http://${host}:8000/api/escort/devices`);
       if (res.ok) {
         const data = await res.json();
         if (data.devices) {

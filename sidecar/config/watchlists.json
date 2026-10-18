@@ -84,5 +84,55 @@
       "enabled": false,
       "webhook_url": ""
     }
-  }
+  },
+  "radar_stations": [
+    {
+      "id": "VOBL_ASR",
+      "name": "Kempegowda ASR/MSSR",
+      "location": "Bengaluru International Airport",
+      "lat": 13.2001,
+      "lon": 77.7088,
+      "antenna_height_m": 940.0,
+      "max_range_km": 463.0,
+      "band": "S/L-Band MSSR",
+      "cone_of_silence_deg": 35.0,
+      "enabled": true
+    },
+    {
+      "id": "VOBG_TAR",
+      "name": "HAL Terminal Area Radar",
+      "location": "HAL Old Airport Bengaluru",
+      "lat": 12.9499,
+      "lon": 77.6682,
+      "antenna_height_m": 915.0,
+      "max_range_km": 222.0,
+      "band": "Terminal TAR",
+      "cone_of_silence_deg": 40.0,
+      "enabled": true
+    },
+    {
+      "id": "YELAHANKA_AFS_AD",
+      "name": "Yelahanka Air Defense Radar",
+      "location": "AFS Yelahanka (IAF)",
+      "lat": 13.1355,
+      "lon": 77.6062,
+      "antenna_height_m": 930.0,
+      "max_range_km": 296.0,
+      "band": "3D Surveillance Air Defense",
+      "cone_of_silence_deg": 30.0,
+      "enabled": true
+    },
+    {
+      "id": "MUMBAI_VABB_ASR",
+      "name": "Mumbai ASR/MSSR",
+      "location": "CSMIA Mumbai",
+      "lat": 19.0896,
+      "lon": 72.8656,
+      "antenna_height_m": 35.0,
+      "max_range_km": 463.0,
+      "band": "S/L-Band MSSR",
+      "cone_of_silence_deg": 35.0,
+      "enabled": true
+    }
+  ]
 }

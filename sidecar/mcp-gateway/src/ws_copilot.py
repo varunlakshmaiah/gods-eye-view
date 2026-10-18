@@ -122,3 +122,4 @@ class WsCopilotHub:
         }
 
 hub = WsCopilotHub()
+ws_copilot = hub

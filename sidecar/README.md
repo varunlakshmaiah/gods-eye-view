@@ -232,14 +232,42 @@ curl -X POST http://localhost:8000/api/tools/detect_maneuver_anomalies \
   -d '{"aoi_name": "Bangalore", "max_descent_rate_fpm": 3500.0}'
 ```
 
-### 17. Upstream Federated Core Tools (30 Tools)
+### 17. `get_radar_stations`
+Lists military and civilian surveillance radar stations with antenna heights, frequency bands, instrumented ranges, and calculated horizons (at ground, 300m low altitude, 3,000m approach, and 10,000m FL330 cruise):
+```bash
+curl -X GET http://localhost:8000/api/radar/stations
+```
+
+### 18. `evaluate_radar_coverage`
+Evaluates line-of-sight radar visibility, horizon shadow due to 4/3 Earth curvature, slant range, elevation angle, and overhead cone-of-silence blind zones for any coordinate:
+```bash
+curl -X POST http://localhost:8000/api/radar/coverage \
+  -H "Content-Type: application/json" \
+  -d '{"lat": 12.9716, "lon": 77.5946, "altitude_m": 2500}'
+```
+
+### 19. `evaluate_entity_radar_coverage`
+Resolves an active aircraft, vessel, or tracked target and evaluates its real-time radar coverage across all surveillance radar stations:
+```bash
+curl -X GET "http://localhost:8000/api/radar/entity_coverage?entity_id=801793"
+```
+
+### 20. `render_radar_domes`
+Broadcasts a command over the WebSocket bridge to dynamically render 3D translucent hemispherical radar coverage envelopes, tactical concentric range rings, and azimuth radials in the Cesium browser globe:
+```bash
+curl -X POST http://localhost:8000/api/radar/render_domes \
+  -H "Content-Type: application/json" \
+  -d '{"enabled": true}'
+```
+
+### 21. Upstream Federated Core Tools (30 Tools)
 `mcp-gateway` automatically discovers and proxies all 30 upstream God's Eye View MCP tools directly:
 - **`situation_brief`**: Unified operational picture (weather, quakes, fires, aircraft, ships, cyclones).
 - **`military_awareness`**: 250km radar perimeter of military aircraft, surface warships, and defense installations.
 - **`show_in_gods_eye_view`**: Live 3D Cesium camera and layer positioning with direct browser links.
 - **`get_earthquakes`**, **`get_weather`**, **`get_weather_radar`**, **`get_flights`**, **`get_ships`**, **`get_satellites`**, **`get_wildfires`**, **`get_air_quality`**, **`get_cctv`**, and more.
 
-All 46 tools can be invoked via standard HTTP `POST /api/tools/{tool_name}` or directly through Claude Desktop / Cursor / Windsurf via MCP.
+All 50 tools can be invoked via standard HTTP `POST /api/tools/{tool_name}` or directly through Claude Desktop / Cursor / Windsurf via MCP.
 
 ---
 

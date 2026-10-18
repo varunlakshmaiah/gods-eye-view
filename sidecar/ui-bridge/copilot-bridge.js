@@ -267,6 +267,26 @@
           break;
         }
 
+        case 'render_radar_domes': {
+          const { enabled, stations, station_id } = params;
+          await renderRadarDomes(stations, enabled !== undefined ? enabled : true, station_id);
+          result = { rendered: true, enabled: enabled !== false };
+          break;
+        }
+
+        case 'toggle_radar_domes': {
+          const { visible } = params;
+          if (radarDataSource) {
+            radarDataSource.show = visible !== undefined ? Boolean(visible) : !radarDataSource.show;
+            gev?.requestRender?.('radar-visibility-toggle');
+            viewer.scene?.requestRender?.();
+            result = { visible: radarDataSource.show };
+          } else {
+            result = { visible: false, message: 'Radar data source not initialized yet' };
+          }
+          break;
+        }
+
         default:
           throw new Error(`Unknown action: ${action}`);
       }
@@ -479,6 +499,152 @@
     } catch (e) {}
   }
 
+  let radarDataSource = null;
+  let cachedRadarStations = [];
+
+  async function renderRadarDomes(stations, enabled = true, stationFilter = null) {
+    if (stations && Array.isArray(stations)) {
+      cachedRadarStations = stations;
+    }
+    const viewer = await waitForViewer(12000);
+    const { gev } = getCesiumGlobals();
+    const Cesium = window.Cesium;
+    if (!viewer || !Cesium) return;
+
+    if (!radarDataSource) {
+      if (Cesium.CustomDataSource) {
+        radarDataSource = new Cesium.CustomDataSource('sidecar-radar-domes');
+        viewer.dataSources.add(radarDataSource);
+      }
+    }
+
+    const entityTarget = radarDataSource ? radarDataSource.entities : viewer.entities;
+    if (radarDataSource) {
+      radarDataSource.entities.removeAll();
+      radarDataSource.show = enabled;
+    }
+
+    if (!enabled) {
+      gev?.requestRender?.('radar-domes-cleared');
+      viewer.scene?.requestRender?.();
+      return;
+    }
+
+    for (const st of cachedRadarStations) {
+      if (!st.enabled) continue;
+      if (stationFilter && st.id.toLowerCase() !== stationFilter.toLowerCase()) continue;
+
+      const center = Cesium.Cartesian3.fromDegrees(st.lon, st.lat, st.antenna_height_m || 0);
+      const groundCenter = Cesium.Cartesian3.fromDegrees(st.lon, st.lat, 0);
+      const maxRangeMeters = (st.max_range_km || 300.0) * 1000.0;
+      const altEnvelopeMeters = 20000.0; // 20km upper radar detection ceiling
+
+      // 1. 3D Translucent Hemispherical Envelope (Cesium Ellipsoid)
+      entityTarget.add({
+        id: `radar_dome_${st.id}`,
+        name: `Radar Coverage Envelope: ${st.name}`,
+        position: center,
+        ellipsoid: {
+          radii: new Cesium.Cartesian3(maxRangeMeters, maxRangeMeters, altEnvelopeMeters),
+          maximumCone: Cesium.Math.PI_OVER_TWO, // Upper hemisphere
+          material: Cesium.Color.fromCssColorString('rgba(0, 160, 255, 0.07)'),
+          outline: true,
+          outlineColor: Cesium.Color.fromCssColorString('rgba(0, 200, 255, 0.35)'),
+          outlineWidth: 1,
+        },
+      });
+
+      // 2. Tactical Concentric Range Rings (50km, 100km, Horizon, Max Range)
+      const ringIntervalsKm = [50.0, 100.0, st.horizon_med_alt_3000m_km || 200.0, st.max_range_km];
+      for (const rKm of ringIntervalsKm) {
+        if (!rKm || rKm > st.max_range_km) continue;
+        const rMeters = rKm * 1000.0;
+        const isMax = Math.abs(rKm - st.max_range_km) < 1.0;
+        const ringColor = isMax ? '#00b4d8' : 'rgba(0, 180, 255, 0.4)';
+
+        entityTarget.add({
+          id: `radar_ring_${st.id}_${Math.round(rKm)}`,
+          position: groundCenter,
+          ellipse: {
+            semiMinorAxis: rMeters,
+            semiMajorAxis: rMeters,
+            material: Cesium.Color.TRANSPARENT,
+            outline: true,
+            outlineColor: Cesium.Color.fromCssColorString(ringColor),
+            outlineWidth: isMax ? 2 : 1,
+            height: 0,
+          },
+        });
+      }
+
+      // 3. Azimuth Spoke Radials (8 cardinal/intercardinal radials to max range)
+      const azimuthAngles = [0, 45, 90, 135, 180, 225, 270, 315];
+      for (const az of azimuthAngles) {
+        const rad = toRadians(az);
+        const dLat = (maxRangeMeters / 6371000.0) * Math.cos(rad);
+        const dLon = (maxRangeMeters / (6371000.0 * Math.cos(toRadians(st.lat)))) * Math.sin(rad);
+        const endPt = Cesium.Cartesian3.fromDegrees(st.lon + toDegrees(dLon), st.lat + toDegrees(dLat), 0);
+
+        entityTarget.add({
+          id: `radar_radial_${st.id}_${az}`,
+          polyline: {
+            positions: [groundCenter, endPt],
+            width: 1,
+            material: Cesium.Color.fromCssColorString('rgba(0, 180, 255, 0.2)'),
+          },
+        });
+      }
+
+      // 4. Center Radar Antenna Mast & Beacon
+      entityTarget.add({
+        id: `radar_mast_${st.id}`,
+        polyline: {
+          positions: [groundCenter, center],
+          width: 3,
+          material: Cesium.Color.fromCssColorString('#00d2ff'),
+        },
+      });
+
+      entityTarget.add({
+        id: `radar_beacon_${st.id}`,
+        position: center,
+        point: {
+          pixelSize: 10,
+          color: Cesium.Color.fromCssColorString('#00ffff'),
+          outlineColor: Cesium.Color.BLACK,
+          outlineWidth: 2,
+        },
+        label: {
+          text: `📡 ${st.name} [${st.band || 'Radar'}]\nRange: ${st.max_range_km}km | FL330 Horizon: ${st.horizon_high_alt_10000m_km || 'N/A'}km`,
+          font: 'bold 11px monospace',
+          fillColor: Cesium.Color.fromCssColorString('#00f0ff'),
+          outlineColor: Cesium.Color.BLACK,
+          outlineWidth: 3,
+          style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+          verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+          pixelOffset: new Cesium.Cartesian2(0, -14),
+          distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 6000000),
+        },
+      });
+    }
+
+    gev?.requestRender?.('radar-domes-rendered');
+    viewer.scene?.requestRender?.();
+    console.log(`%c[GodsEyeSidecar]%c Rendered ${cachedRadarStations.length} 3D Radar Coverage Dome(s) in Cesium.`, 'color: #00d2ff; font-weight: bold;', 'color: inherit;');
+  }
+
+  async function syncRadarVisuals() {
+    try {
+      const res = await fetch('http://localhost:8000/api/radar/stations');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.stations) {
+          renderRadarDomes(data.stations, true);
+        }
+      }
+    } catch (e) {}
+  }
+
   // Periodic heartbeat reporting camera changes
   setInterval(() => {
     sendViewportUpdate();
@@ -489,9 +655,11 @@
     document.addEventListener('DOMContentLoaded', () => {
       connect();
       syncAoiVisuals();
+      syncRadarVisuals();
     });
   } else {
     connect();
     syncAoiVisuals();
+    syncRadarVisuals();
   }
 })();

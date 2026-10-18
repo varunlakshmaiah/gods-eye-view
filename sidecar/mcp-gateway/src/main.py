@@ -26,6 +26,7 @@ from .alerts.engine import tripwire_engine
 from .intsum.engine import intsum_engine
 from .kinematics.cpa import calculate_pairwise_cpa, calculate_aoi_intercept, scan_airspace_conflicts
 from .pol.engine import pol_engine
+from .radar.engine import radar_engine
 
 # ----------------------------------------------------------------------------
 # Lifespan Lifecycle
@@ -132,6 +133,16 @@ class ScanConflictsRequest(BaseModel):
     radius_km: float = Field(100.0, description="Scan radius in km")
     min_cpa_km: float = Field(5.0, description="Minimum separation threshold in km")
     max_tcpa_min: float = Field(15.0, description="Maximum lookahead time in minutes")
+
+class RadarCoverageRequest(BaseModel):
+    lat: float = Field(..., description="Target latitude")
+    lon: float = Field(..., description="Target longitude")
+    altitude_m: float = Field(1000.0, description="Target altitude in meters")
+    station_id: Optional[str] = Field(None, description="Optional radar station ID to evaluate")
+
+class RadarRenderRequest(BaseModel):
+    enabled: bool = Field(True, description="Enable or disable 3D radar domes rendering")
+    station_id: Optional[str] = Field(None, description="Optional specific radar station ID")
 
 # ----------------------------------------------------------------------------
 # Tool Implementation Functions
@@ -506,6 +517,22 @@ async def api_detect_dark_contacts(aoi: str = "Bangalore", silence_min: int = 15
 async def api_detect_maneuver_anomalies(aoi: str = "Bangalore", max_fpm: float = 3500.0):
     return await pol_engine.detect_maneuver_anomalies(aoi, max_fpm)
 
+@app.get("/api/radar/stations")
+async def api_get_radar_stations(enabled_only: bool = True):
+    return {"stations": radar_engine.get_stations(enabled_only)}
+
+@app.post("/api/radar/coverage")
+async def api_evaluate_radar_coverage(req: RadarCoverageRequest):
+    return radar_engine.evaluate_coverage(req.lat, req.lon, req.altitude_m, req.station_id)
+
+@app.get("/api/radar/entity_coverage")
+async def api_evaluate_entity_radar_coverage(entity_id: str):
+    return await radar_engine.evaluate_entity_coverage(entity_id)
+
+@app.post("/api/radar/render_domes")
+async def api_render_radar_domes(req: RadarRenderRequest):
+    return await radar_engine.render_domes(req.enabled, req.station_id)
+
 @app.get("/api/mcp/tools")
 async def api_list_all_tools():
     """List all registered tools (both native and federated) with their schemas."""
@@ -688,6 +715,36 @@ async def detect_maneuver_anomalies(
 ) -> str:
     """Detect severe kinematic flight anomalies such as rapid uncoordinated descents (> 3,500 fpm) and high-G deviations."""
     res = await pol_engine.detect_maneuver_anomalies(aoi_name, max_descent_rate_fpm)
+    import json
+    return json.dumps(res, indent=2)
+
+@mcp_server.tool()
+async def get_radar_stations(enabled_only: bool = True) -> str:
+    """List operational military and civilian surveillance radar stations with antenna heights and calculated horizon envelopes."""
+    res = radar_engine.get_stations(enabled_only)
+    import json
+    return json.dumps(res, indent=2)
+
+@mcp_server.tool()
+async def evaluate_radar_coverage(
+    lat: float, lon: float, altitude_m: float = 1000.0, station_id: Optional[str] = None
+) -> str:
+    """Evaluate line-of-sight radar coverage, horizon shadow, slant range, elevation angle, and blind cone status for any target coordinate."""
+    res = radar_engine.evaluate_coverage(lat, lon, altitude_m, station_id)
+    import json
+    return json.dumps(res, indent=2)
+
+@mcp_server.tool()
+async def evaluate_entity_radar_coverage(entity_id: str) -> str:
+    """Evaluate real-time line-of-sight radar visibility and horizon shadow for an active tracked aircraft or vessel."""
+    res = await radar_engine.evaluate_entity_coverage(entity_id)
+    import json
+    return json.dumps(res, indent=2)
+
+@mcp_server.tool()
+async def render_radar_domes(enabled: bool = True, station_id: Optional[str] = None) -> str:
+    """Render 3D hemispherical radar coverage envelopes, range rings, and azimuth radials in the Cesium browser globe."""
+    res = await radar_engine.render_domes(enabled, station_id)
     import json
     return json.dumps(res, indent=2)
 

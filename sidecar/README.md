@@ -7,6 +7,7 @@
 ## 📚 Documentation Suite
 
 Comprehensive technical guides are available in the [`docs/`](./docs) directory:
+* 🌟 **[Comprehensive Feature Catalog (FEATURES.md)](./docs/FEATURES.md):** Complete capabilities specification, 55 MCP tool catalog, autonomous workflows, REST endpoints, and schema references.
 * 🛰️ **[Personal C6ISR Blueprint (PERSONAL_C6ISR.md)](./docs/PERSONAL_C6ISR.md):** The low-resource, sovereign situational awareness framework, pragmatic boundaries, and non-military civilian use cases.
 * 📋 **[Personal Intelligence Implementation Plan (PLAN_PERSONAL_INTELLIGENCE.md)](./docs/PLAN_PERSONAL_INTELLIGENCE.md):** Phased technical implementation roadmap for autonomous tripwires, alert buses, and AI watch loops.
 * 🏛️ **[System Architecture (ARCHITECTURE.md)](./docs/ARCHITECTURE.md):** System topology, network namespace pairing, loopback bypass, and data flow.

@@ -107,6 +107,8 @@
             handleCommand(msg);
           } else if (msg.type === 'tactical_alert') {
             handleTacticalAlert(msg.alert);
+          } else if (msg.type === 'aoi_sync') {
+            renderAois(msg.aois);
           }
         } catch (err) {
           console.warn('[GodsEyeSidecar] Error parsing message:', err);
@@ -246,6 +248,25 @@
           break;
         }
 
+        case 'toggle_aoi_visuals': {
+          const { visible } = params;
+          if (aoiDataSource) {
+            aoiDataSource.show = visible !== undefined ? Boolean(visible) : !aoiDataSource.show;
+            gev?.requestRender?.('aoi-visibility-toggle');
+            viewer.scene?.requestRender?.();
+            result = { visible: aoiDataSource.show };
+          } else {
+            result = { visible: false, message: 'AOI data source not initialized yet' };
+          }
+          break;
+        }
+
+        case 'refresh_aois': {
+          await syncAoiVisuals();
+          result = { refreshed: true, aoi_count: cachedAois.length };
+          break;
+        }
+
         default:
           throw new Error(`Unknown action: ${action}`);
       }
@@ -372,6 +393,92 @@
     }, 15000);
   }
 
+  let aoiDataSource = null;
+  let cachedAois = [];
+
+  async function renderAois(aois) {
+    if (aois && Array.isArray(aois)) {
+      cachedAois = aois;
+    }
+    const viewer = await waitForViewer(12000);
+    const { gev } = getCesiumGlobals();
+    const Cesium = window.Cesium;
+    if (!viewer || !Cesium) return;
+
+    if (!aoiDataSource) {
+      if (Cesium.CustomDataSource) {
+        aoiDataSource = new Cesium.CustomDataSource('sidecar-aois');
+        viewer.dataSources.add(aoiDataSource);
+      }
+    }
+
+    const entityTarget = aoiDataSource ? aoiDataSource.entities : viewer.entities;
+    if (aoiDataSource) {
+      aoiDataSource.entities.removeAll();
+    }
+
+    for (const aoi of cachedAois) {
+      if (!aoi.enabled) continue;
+      const radiusMeters = (aoi.radius_km || 50.0) * 1000.0;
+      const center = Cesium.Cartesian3.fromDegrees(aoi.lon, aoi.lat);
+
+      // 1. Semi-transparent glowing tactical geofence fill + outline ring
+      entityTarget.add({
+        id: `aoi_ring_${aoi.id}`,
+        name: `AOI: ${aoi.name}`,
+        position: center,
+        ellipse: {
+          semiMinorAxis: radiusMeters,
+          semiMajorAxis: radiusMeters,
+          material: Cesium.Color.fromCssColorString('rgba(0, 255, 204, 0.08)'),
+          outline: true,
+          outlineColor: Cesium.Color.fromCssColorString('#00ffcc'),
+          outlineWidth: 2,
+          height: 0,
+        },
+      });
+
+      // 2. Center Tactical Beacon Point & Label
+      entityTarget.add({
+        id: `aoi_beacon_${aoi.id}`,
+        position: center,
+        point: {
+          pixelSize: 8,
+          color: Cesium.Color.fromCssColorString('#00ffcc'),
+          outlineColor: Cesium.Color.BLACK,
+          outlineWidth: 2,
+        },
+        label: {
+          text: `🛡️ ${aoi.name.toUpperCase()} AOI [${aoi.radius_km}km]`,
+          font: 'bold 12px monospace',
+          fillColor: Cesium.Color.fromCssColorString('#00ffcc'),
+          outlineColor: Cesium.Color.BLACK,
+          outlineWidth: 3,
+          style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+          verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+          pixelOffset: new Cesium.Cartesian2(0, -12),
+          distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 8000000),
+        },
+      });
+    }
+
+    gev?.requestRender?.('aoi-rings-rendered');
+    viewer.scene?.requestRender?.();
+    console.log(`%c[GodsEyeSidecar]%c Rendered ${cachedAois.length} AOI perimeter ring(s) in 3D Cesium.`, 'color: #00ffcc; font-weight: bold;', 'color: inherit;');
+  }
+
+  async function syncAoiVisuals() {
+    try {
+      const res = await fetch('http://localhost:8000/api/aois');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.aois) {
+          renderAois(data.aois);
+        }
+      }
+    } catch (e) {}
+  }
+
   // Periodic heartbeat reporting camera changes
   setInterval(() => {
     sendViewportUpdate();
@@ -379,8 +486,12 @@
 
   // Connect when DOM ready
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', connect);
+    document.addEventListener('DOMContentLoaded', () => {
+      connect();
+      syncAoiVisuals();
+    });
   } else {
     connect();
+    syncAoiVisuals();
   }
 })();

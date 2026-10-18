@@ -176,14 +176,38 @@ curl -X POST http://localhost:8000/api/tools/test_tactical_alert \
   -d '{"title": "Perimeter Breach Test", "severity": "CRITICAL", "message": "Low altitude contact breached Bangalore perimeter"}'
 ```
 
-### 10. Upstream Federated Core Tools (30 Tools)
+### 10. `generate_intelligence_summary`
+Synthesizes a multi-domain situational Intelligence Summary (INTSUM) dossier for an AOI (air traffic, incursions, hazards, infrastructure, upcoming satellite passes):
+```bash
+curl -X POST http://localhost:8000/api/tools/generate_intelligence_summary \
+  -H "Content-Type: application/json" \
+  -d '{"aoi_name": "Bangalore", "window_hours": 12}'
+```
+
+### 11. `dispatch_intelligence_summary`
+Generates and broadcasts an INTSUM situational briefing across all notification channels (Browser HUD, Telegram, Discord, Slack, DB):
+```bash
+curl -X POST http://localhost:8000/api/tools/dispatch_intelligence_summary \
+  -H "Content-Type: application/json" \
+  -d '{"aoi_name": "Bangalore", "window_hours": 12}'
+```
+
+### 12. `toggle_aoi_perimeters`
+Toggles or sets the visibility of 3D Area of Interest perimeter rings and tactical geofence beacons on the Cesium browser globe:
+```bash
+curl -X POST http://localhost:8000/api/tools/toggle_aoi_perimeters \
+  -H "Content-Type: application/json" \
+  -d '{"visible": true}'
+```
+
+### 13. Upstream Federated Core Tools (30 Tools)
 `mcp-gateway` automatically discovers and proxies all 30 upstream God's Eye View MCP tools directly:
 - **`situation_brief`**: Unified operational picture (weather, quakes, fires, aircraft, ships, cyclones).
 - **`military_awareness`**: 250km radar perimeter of military aircraft, surface warships, and defense installations.
 - **`show_in_gods_eye_view`**: Live 3D Cesium camera and layer positioning with direct browser links.
 - **`get_earthquakes`**, **`get_weather`**, **`get_weather_radar`**, **`get_flights`**, **`get_ships`**, **`get_satellites`**, **`get_wildfires`**, **`get_air_quality`**, **`get_cctv`**, and more.
 
-All 39 tools can be invoked via standard HTTP `POST /api/tools/{tool_name}` or directly through Claude Desktop / Cursor / Windsurf via MCP.
+All 42 tools can be invoked via standard HTTP `POST /api/tools/{tool_name}` or directly through Claude Desktop / Cursor / Windsurf via MCP.
 
 ---
 

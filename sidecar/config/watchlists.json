@@ -7,7 +7,32 @@
       "lon": 77.5946,
       "radius_km": 75.0,
       "description": "Primary Home Tactical Area of Interest (Bengaluru, Karnataka, India)",
-      "airports": ["VOBL", "VOBG"],
+      "airports": [
+        "VOBL",
+        "VOBG"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "aoi_mysore_tactical_zone",
+      "name": "Mysore Tactical Zone",
+      "lat": 12.2958,
+      "lon": 76.6394,
+      "radius_km": 40.0,
+      "description": "Secondary AOI",
+      "airports": [],
+      "enabled": true
+    },
+    {
+      "id": "aoi_mumbai_port_perimeter",
+      "name": "Mumbai Port Perimeter",
+      "lat": 18.9438,
+      "lon": 72.8641,
+      "radius_km": 50.0,
+      "description": "Naval and port monitoring zone",
+      "airports": [
+        "VABB"
+      ],
       "enabled": true
     }
   ],

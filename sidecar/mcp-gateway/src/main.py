@@ -23,10 +23,21 @@ from .tools.ui_control import execute_cockpit_control
 from .upstream_tools import poll_and_federate, federate_upstream_tools
 from .alerts.dispatcher import dispatcher, TacticalAlert
 from .alerts.engine import tripwire_engine
+from .intsum.engine import intsum_engine
 
 # ----------------------------------------------------------------------------
 # Lifespan Lifecycle
 # ----------------------------------------------------------------------------
+async def periodic_intsum_briefing():
+    await asyncio.sleep(45)  # Wait for startup and initial telemetry flow
+    while True:
+        try:
+            print("[IntsumEngine] Running scheduled 12-hour INTSUM situational briefing...")
+            await intsum_engine.dispatch_summary(aoi_name="Bangalore", window_hours=12)
+        except Exception as e:
+            print(f"[IntsumEngine] Error in periodic INTSUM dispatch: {e}")
+        await asyncio.sleep(43200)  # 12 hours
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("[McpGateway] Initializing router connections...")
@@ -34,6 +45,7 @@ async def lifespan(app: FastAPI):
     upstream_url = os.getenv("UPSTREAM_URL", "http://127.0.0.1:4173")
     asyncio.create_task(poll_and_federate(mcp_server, f"{upstream_url}/mcp"))
     asyncio.create_task(tripwire_engine.start())
+    asyncio.create_task(periodic_intsum_briefing())
     yield
     print("[McpGateway] Closing router connections...")
     tripwire_engine.stop()
@@ -408,7 +420,18 @@ async def api_get_aois():
 
 @app.post("/api/aois")
 async def api_add_aoi(req: AddAoiRequest):
-    return tripwire_engine.add_aoi(req.name, req.lat, req.lon, req.radius_km, req.description, req.airports)
+    res = tripwire_engine.add_aoi(req.name, req.lat, req.lon, req.radius_km, req.description, req.airports)
+    # Broadcast updated AOIs to all connected Cesium browser viewports
+    await hub.broadcast_json({"type": "aoi_sync", "aois": tripwire_engine.get_aois()})
+    return res
+
+@app.get("/api/intsum/generate")
+async def api_generate_intsum(aoi: str = "Bangalore", hours: int = 12):
+    return await intsum_engine.generate_summary(aoi, hours)
+
+@app.post("/api/intsum/dispatch")
+async def api_dispatch_intsum(aoi: str = "Bangalore", hours: int = 12):
+    return await intsum_engine.dispatch_summary(aoi, hours)
 
 @app.get("/api/mcp/tools")
 async def api_list_all_tools():
@@ -440,6 +463,14 @@ async def api_execute_tool(tool_name: str, payload: Dict[str, Any] = Body(defaul
 @app.websocket("/ws/copilot")
 async def websocket_copilot_endpoint(websocket: WebSocket):
     await hub.connect(websocket)
+    try:
+        import json
+        await websocket.send_text(json.dumps({
+            "type": "aoi_sync",
+            "aois": tripwire_engine.get_aois()
+        }))
+    except Exception:
+        pass
     try:
         while True:
             text = await websocket.receive_text()
@@ -530,6 +561,26 @@ async def test_tactical_alert(
 ) -> str:
     """Simulate and dispatch a tactical alert across HUD banners, OS desktop notifications, and webhooks."""
     res = await tool_test_tactical_alert(title=title, severity=severity, message=message, category=category)
+    import json
+    return json.dumps(res, indent=2)
+
+@mcp_server.tool()
+async def generate_intelligence_summary(aoi_name: str = "Bangalore", window_hours: int = 12) -> str:
+    """Generate an executive multi-domain Intelligence Summary (INTSUM) dossier for an AOI (air traffic, incursions, hazards, infrastructure, upcoming satellite passes)."""
+    dossier = await intsum_engine.generate_summary(aoi_name, window_hours)
+    return dossier["markdown"]
+
+@mcp_server.tool()
+async def dispatch_intelligence_summary(aoi_name: str = "Bangalore", window_hours: int = 12) -> str:
+    """Generate and dispatch an INTSUM situational briefing across all notification channels (Browser HUD, Telegram, Discord, Slack, DB)."""
+    res = await intsum_engine.dispatch_summary(aoi_name, window_hours)
+    import json
+    return json.dumps(res, indent=2)
+
+@mcp_server.tool()
+async def toggle_aoi_perimeters(visible: Optional[bool] = None) -> str:
+    """Toggle or set visibility of 3D Area of Interest perimeter rings and tactical geofence beacons in the Cesium browser cockpit."""
+    res = await hub.broadcast_command("toggle_aoi_visuals", {"visible": visible})
     import json
     return json.dumps(res, indent=2)
 

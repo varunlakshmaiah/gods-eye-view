@@ -78,6 +78,13 @@
         this.x = x;
         this.y = y;
       },
+      CallbackProperty: function (callback, isConstant = false) {
+        this._callback = callback;
+        this._isConstant = isConstant;
+        this.getValue = function (time, result) {
+          return typeof this._callback === 'function' ? this._callback(time, result) : this._callback;
+        };
+      },
       Math: {
         toRadians: (deg) => (deg * Math.PI) / 180.0,
         toDegrees: (rad) => (rad * 180.0) / Math.PI,
@@ -927,6 +934,9 @@
 
   let cachedEscortDevices = [];
   const trackedTrafficVehicles = new Map();
+  let activeFollowVehicleId = null;
+  let lastFollowCartesian = null;
+  let isCameraFlying = false;
 
   function normalizeVehicleId(rawId) {
     if (!rawId) return '';
@@ -935,13 +945,27 @@
     if (m) {
       return `VEH-${m[1].padStart(4, '0')}`;
     }
-    return trimmed.toUpperCase();
+    return trimmed;
   }
 
   function getNumericVehicleId(rawId) {
     if (!rawId) return null;
     const num = String(rawId).replace(/[^0-9]/g, '');
     return num ? Number(num) : null;
+  }
+
+  function findEscortDevice(rawId) {
+    if (!rawId) return null;
+    const raw = String(rawId).trim();
+    const norm = normalizeVehicleId(raw);
+    const num = getNumericVehicleId(raw);
+    return cachedEscortDevices.find(d => {
+      if (!d) return false;
+      if (d.device_id === raw || d.device_id === norm) return true;
+      if (normalizeVehicleId(d.device_id) === norm) return true;
+      if (num !== null && getNumericVehicleId(d.device_id) === num) return true;
+      return false;
+    }) || null;
   }
 
   function cartesianToLatLon(pos) {
@@ -986,19 +1010,34 @@
   }
 
   function findTrafficDot(targetId) {
+    if (!targetId) return null;
     const { gev } = getCesiumGlobals();
     const trafficLayer = gev?.dataManager?.layers?.get ? gev.dataManager.layers.get('traffic') : gev?.dataManager?.layers?.traffic;
     const module = trafficLayer?.module || trafficLayer;
     if (!module) return null;
 
     const numTarget = getNumericVehicleId(targetId);
+    const normTarget = normalizeVehicleId(targetId).toUpperCase();
+    const strTarget = String(targetId).trim().toUpperCase();
     let found = null;
 
     if (typeof module.visitMotionDots === 'function') {
       module.visitMotionDots((id, roadKey, point, road) => {
         if (found) return;
         const num = Number(id);
-        if (num === numTarget || String(id) === String(targetId) || `VEH-${id}` === targetId || `VEH-${String(id).padStart(4, '0')}` === targetId) {
+        const strId = String(id).trim().toUpperCase();
+        const vehId = `VEH-${strId}`.toUpperCase();
+        const vehPadded = `VEH-${String(id).padStart(4, '0')}`.toUpperCase();
+
+        if (
+          (numTarget !== null && num === numTarget) ||
+          strId === strTarget ||
+          strId === normTarget ||
+          vehId === strTarget ||
+          vehId === normTarget ||
+          vehPadded === strTarget ||
+          vehPadded === normTarget
+        ) {
           found = { id, roadKey, point, road };
         }
       });
@@ -1007,6 +1046,7 @@
   }
 
   function getLiveVehicleCartesian(rawDeviceId) {
+    if (!rawDeviceId) return null;
     const { viewer, Cesium } = getCesiumGlobals();
     const deviceId = normalizeVehicleId(rawDeviceId);
     const numId = getNumericVehicleId(deviceId);
@@ -1025,7 +1065,7 @@
     }
 
     // 2. Search traffic layer for matching dot
-    const dot = findTrafficDot(deviceId);
+    const dot = findTrafficDot(deviceId) || findTrafficDot(rawDeviceId);
     if (dot && dot.point?.position) {
       if (tracked) {
         tracked.dotRef = dot;
@@ -1044,11 +1084,66 @@
     }
 
     // 4. Fallback to device coordinates
-    const dev = cachedEscortDevices.find(d => d.device_id === rawDeviceId || normalizeVehicleId(d.device_id) === deviceId);
+    const dev = findEscortDevice(rawDeviceId);
     if (dev && dev.lat !== undefined && dev.lon !== undefined && Cesium?.Cartesian3) {
-      return Cesium.Cartesian3.fromDegrees(dev.lon, dev.lat, dev.altitude_m || 0);
+      return Cesium.Cartesian3.fromDegrees(Number(dev.lon), Number(dev.lat), Number(dev.altitude_m || 0));
     }
     return null;
+  }
+
+  function installCameraFollower(viewer, Cesium) {
+    if (!viewer?.scene?.preRender) return;
+    if (viewer.__godsEyeFollowerInstalled) return;
+    viewer.__godsEyeFollowerInstalled = true;
+
+    viewer.scene.preRender.addEventListener(() => {
+      if (!activeFollowVehicleId || isCameraFlying) return;
+      if (viewer.isDestroyed?.()) return;
+
+      const currentPos = getLiveVehicleCartesian(activeFollowVehicleId);
+      if (!currentPos) return;
+
+      if (!lastFollowCartesian) {
+        if (Cesium?.Cartesian3?.clone) {
+          lastFollowCartesian = Cesium.Cartesian3.clone(currentPos, new Cesium.Cartesian3());
+        } else {
+          lastFollowCartesian = { x: currentPos.x, y: currentPos.y, z: currentPos.z };
+        }
+        return;
+      }
+
+      const dx = currentPos.x - lastFollowCartesian.x;
+      const dy = currentPos.y - lastFollowCartesian.y;
+      const dz = currentPos.z - lastFollowCartesian.z;
+      const distSq = dx * dx + dy * dy + dz * dz;
+
+      // Follow vehicle displacement smoothly.
+      // Must have moved, but ignore abnormal jumps (> 5000m / frame, e.g. layer re-init)
+      if (distSq > 0.0001 && distSq < 25000000) {
+        viewer.camera.position.x += dx;
+        viewer.camera.position.y += dy;
+        viewer.camera.position.z += dz;
+      }
+
+      lastFollowCartesian.x = currentPos.x;
+      lastFollowCartesian.y = currentPos.y;
+      lastFollowCartesian.z = currentPos.z;
+    });
+  }
+
+  function stopTrackingVehicle() {
+    activeFollowVehicleId = null;
+    lastFollowCartesian = null;
+    isCameraFlying = false;
+    const { viewer, Cesium } = getCesiumGlobals();
+    if (viewer) {
+      viewer.trackedEntity = undefined;
+      if (Cesium?.Matrix4?.IDENTITY) {
+        try { viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY); } catch (e) {}
+      }
+    }
+    updateTrackingHudState();
+    console.log('[GodsEyeSidecar] Camera tracking released');
   }
 
   function getActiveTrafficVehiclesSample(limit = 6) {
@@ -1296,42 +1391,89 @@
   }
 
   async function trackEscortVehicle(rawDeviceId) {
+    if (!rawDeviceId) return;
     const deviceId = normalizeVehicleId(rawDeviceId);
     const { viewer, Cesium, gev } = getCesiumGlobals();
     if (!viewer) return;
 
-    // Ensure traffic layer is active so dots move
+    // Ensure camera follower listener is attached to scene.preRender
+    installCameraFollower(viewer, Cesium);
+
+    // 1. Ensure traffic layer is active so vehicles render and move
     if (gev?.dataManager?.enableLayer) {
       try { gev.dataManager.enableLayer('traffic'); } catch (e) {}
     }
 
-    let pointEnt = viewer.entities.getById(`${ESCORT_PREFIX}point_${deviceId}`) ||
-                   viewer.entities.getById(`${ESCORT_PREFIX}point_${rawDeviceId}`);
-
-    if (!pointEnt) {
-      await renderEscortBubbles(cachedEscortDevices);
-      pointEnt = viewer.entities.getById(`${ESCORT_PREFIX}point_${deviceId}`) ||
-                 viewer.entities.getById(`${ESCORT_PREFIX}point_${rawDeviceId}`);
+    // 2. Clear any Cesium trackedEntity or transform lock so our 60 FPS follower has clean camera control
+    viewer.trackedEntity = undefined;
+    if (Cesium?.Matrix4?.IDENTITY) {
+      try { viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY); } catch (e) {}
     }
 
-    if (pointEnt) {
-      viewer.camera.cancelFlight();
-
-      // Configure chase camera offset (600m back, 1000m up in ENU frame)
-      if (Cesium.Cartesian3) {
-        pointEnt.viewFrom = new Cesium.Cartesian3(0, -600, 1000);
+    // 3. Resolve target coordinates
+    let targetCoords = null;
+    const dot = findTrafficDot(deviceId) || findTrafficDot(rawDeviceId);
+    if (dot?.point?.position) {
+      targetCoords = cartesianToLatLon(dot.point.position);
+    }
+    if (!targetCoords) {
+      const dev = findEscortDevice(rawDeviceId);
+      if (dev && dev.lat !== undefined && dev.lon !== undefined) {
+        targetCoords = { lat: Number(dev.lat), lon: Number(dev.lon), alt: Number(dev.altitude_m || 0) };
       }
-
-      // Attach Cesium's trackedEntity camera lock
-      viewer.trackedEntity = pointEnt;
-      viewer.selectedEntity = pointEnt;
-
-      gev?.requestRender?.('copilot-track-vehicle');
-      viewer.scene?.requestRender?.();
-
-      updateTrackingHudState();
-      console.log(`%c[GodsEyeSidecar]%c Camera locked onto and continuously tracking vehicle: ${deviceId}`, 'color: #00ff88; font-weight: bold;', 'color: inherit;');
     }
+    if (!targetCoords) {
+      const tracked = trackedTrafficVehicles.get(deviceId) || trackedTrafficVehicles.get(rawDeviceId);
+      if (tracked && tracked.lastLat && tracked.lastLon) {
+        targetCoords = { lat: tracked.lastLat, lon: tracked.lastLon, alt: tracked.lastAlt || 0 };
+      }
+    }
+    if (!targetCoords) {
+      const sample = getActiveTrafficVehiclesSample(20);
+      const match = sample.find(s => s.id === deviceId || s.id === rawDeviceId || s.num === getNumericVehicleId(rawDeviceId));
+      if (match?.position) {
+        targetCoords = cartesianToLatLon(match.position);
+      }
+    }
+
+    if (!targetCoords) {
+      console.warn(`[GodsEyeSidecar] Cannot locate coordinates for vehicle: ${rawDeviceId}`);
+      return;
+    }
+
+    // 4. Set tracking active and mark camera flying
+    activeFollowVehicleId = deviceId;
+    isCameraFlying = true;
+    lastFollowCartesian = null;
+    updateTrackingHudState();
+
+    console.log(`[GodsEyeSidecar] Flying camera to tracked vehicle ${deviceId} at (${targetCoords.lat.toFixed(4)}, ${targetCoords.lon.toFixed(4)})...`);
+
+    // 5. Execute smooth camera flight: nadir top-down view (-89.9° pitch) at 2200m altitude
+    await handleCommand({
+      action: 'fly_to_coordinate',
+      params: {
+        lat: targetCoords.lat,
+        lon: targetCoords.lon,
+        altitude_m: 2200,
+        pitch_deg: -89.9,
+        heading_deg: 0,
+        duration_s: 1.5,
+      },
+    });
+
+    // 6. Flight complete: initialize follower position for 60 FPS lockstep follow
+    isCameraFlying = false;
+    const livePos = getLiveVehicleCartesian(deviceId);
+    if (livePos) {
+      if (Cesium?.Cartesian3?.clone) {
+        lastFollowCartesian = Cesium.Cartesian3.clone(livePos, new Cesium.Cartesian3());
+      } else {
+        lastFollowCartesian = { x: livePos.x, y: livePos.y, z: livePos.z };
+      }
+    }
+    updateTrackingHudState();
+    console.log(`%c[GodsEyeSidecar]%c Camera locked and tracking vehicle ${deviceId} in real-time at 60 FPS`, 'color: #00ff88; font-weight: bold;', 'color: inherit;');
   }
 
   async function tagTrafficVehicle(rawVehicleId, bubbleRadiusKm = 15.0, customName = null) {
@@ -1341,7 +1483,7 @@
     const radius = Number(bubbleRadiusKm) || 15.0;
 
     // 1. Ensure Street Traffic layer is enabled in God's Eye View
-    const { gev } = getCesiumGlobals();
+    const { gev, Cesium } = getCesiumGlobals();
     if (gev?.dataManager?.enableLayer) {
       try {
         gev.dataManager.enableLayer('traffic');
@@ -1350,7 +1492,7 @@
 
     // 2. Locate vehicle dot in current traffic layer
     let initialCoords = null;
-    const dot = findTrafficDot(vehicleId);
+    const dot = findTrafficDot(vehicleId) || findTrafficDot(rawVehicleId);
     if (dot && dot.point?.position) {
       initialCoords = cartesianToLatLon(dot.point.position);
     }
@@ -1440,6 +1582,11 @@
       }
     }
 
+    // Release camera tracking if this vehicle was active
+    if (activeFollowVehicleId === deviceId || activeFollowVehicleId === rawDeviceId || (numId && getNumericVehicleId(activeFollowVehicleId) === numId)) {
+      stopTrackingVehicle();
+    }
+
     // Call backend DELETE
     try {
       const host = window.location.hostname || 'localhost';
@@ -1453,7 +1600,7 @@
       }
     } catch (e) {}
 
-    // Clean up Cesium entities and detach camera tracking if this vehicle was tracked
+    // Clean up Cesium entities
     const { viewer, gev } = getCesiumGlobals();
     if (viewer?.entities) {
       const toRemove = viewer.entities.values
@@ -1461,9 +1608,6 @@
         .map(e => e.id);
 
       for (const id of toRemove) {
-        if (viewer.trackedEntity?.id === id) {
-          viewer.trackedEntity = undefined;
-        }
         viewer.entities.removeById(id);
       }
       gev?.requestRender?.('escort-bubble-removed');
@@ -1575,26 +1719,27 @@
   let escortHudExpanded = true;
 
   function updateTrackingHudState() {
-    const { viewer } = getCesiumGlobals();
-    const trackedId = viewer?.trackedEntity?.id || '';
-    const isEscortTracked = trackedId.startsWith(`${ESCORT_PREFIX}point_`);
-    const activeDevId = isEscortTracked ? trackedId.slice(`${ESCORT_PREFIX}point_`.length) : null;
-
     const flyBtns = document.querySelectorAll('.sidecar-hud-fly-btn');
     flyBtns.forEach(btn => {
       const btnId = btn.getAttribute('data-id');
-      const isThisTracked = activeDevId && (btnId === activeDevId || normalizeVehicleId(btnId) === activeDevId);
+      const isThisTracked = activeFollowVehicleId && (
+        btnId === activeFollowVehicleId ||
+        normalizeVehicleId(btnId) === activeFollowVehicleId ||
+        (getNumericVehicleId(btnId) !== null && getNumericVehicleId(btnId) === getNumericVehicleId(activeFollowVehicleId))
+      );
       if (isThisTracked) {
         btn.textContent = '● TRACKING';
         btn.style.background = '#00ffcc';
         btn.style.boxShadow = '0 0 12px #00ffcc';
         btn.style.color = '#000';
+        btn.title = 'Click to untrack and free camera';
       } else {
         btn.textContent = 'FLY TO';
         btn.style.boxShadow = 'none';
         const color = btn.getAttribute('data-color') || '#00ff88';
         btn.style.background = color;
         btn.style.color = '#000';
+        btn.title = 'Fly to and follow vehicle in real-time';
       }
     });
   }
@@ -1768,13 +1913,14 @@
     flyBtns.forEach(btn => {
       btn.onclick = async () => {
         const id = btn.getAttribute('data-id');
-        const { viewer } = getCesiumGlobals();
-        const trackedId = viewer?.trackedEntity?.id || '';
-        const isCurrentlyTracked = trackedId === `${ESCORT_PREFIX}point_${id}` || trackedId === `${ESCORT_PREFIX}point_${normalizeVehicleId(id)}`;
+        const isCurrentlyTracked = activeFollowVehicleId && (
+          id === activeFollowVehicleId ||
+          normalizeVehicleId(id) === activeFollowVehicleId ||
+          (getNumericVehicleId(id) !== null && getNumericVehicleId(id) === getNumericVehicleId(activeFollowVehicleId))
+        );
 
         if (isCurrentlyTracked) {
-          viewer.trackedEntity = undefined;
-          updateTrackingHudState();
+          stopTrackingVehicle();
         } else {
           await trackEscortVehicle(id);
         }
@@ -1872,10 +2018,10 @@
   }
 
   // Global APIs on window for developer console and integration
-  window.__godsEyeSidecarFlyTo = (lat, lon, alt = 45000, pitch_deg = -89.9) => {
+  window.__godsEyeSidecarFlyTo = (lat, lon, alt = 2200, pitch_deg = -89.9) => {
     handleCommand({
       action: 'fly_to_coordinate',
-      params: { lat, lon, altitude_m: alt, pitch_deg, duration_s: 2.0 },
+      params: { lat, lon, altitude_m: alt, pitch_deg, duration_s: 1.5 },
     });
   };
 
@@ -1884,9 +2030,7 @@
   };
 
   window.__godsEyeSidecarStopTracking = () => {
-    const { viewer } = getCesiumGlobals();
-    if (viewer) viewer.trackedEntity = undefined;
-    updateTrackingHudState();
+    stopTrackingVehicle();
   };
 
   window.__godsEyeSidecarTagTrafficVehicle = (vehicleId, bubbleRadiusKm = 15.0, name = null) => {
@@ -1901,12 +2045,16 @@
     return getActiveTrafficVehiclesSample(limit);
   };
 
-  // Listen to Cesium trackedEntityChanged to reflect live camera lock in the HUD
+  // Wire Cesium viewer follower and state listeners on ready
   waitForViewer(8000).then(v => {
-    if (v?.trackedEntityChanged?.addEventListener) {
-      v.trackedEntityChanged.addEventListener(() => {
-        updateTrackingHudState();
-      });
+    if (v) {
+      const { Cesium } = getCesiumGlobals();
+      installCameraFollower(v, Cesium);
+      if (v?.trackedEntityChanged?.addEventListener) {
+        v.trackedEntityChanged.addEventListener(() => {
+          updateTrackingHudState();
+        });
+      }
     }
   });
 

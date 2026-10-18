@@ -1,0 +1,98 @@
+services:
+  upstream:
+    build: .
+    user: "${UID:-1000}:${GID:-1000}"
+    volumes:
+      - .:/app
+      - /app/node_modules
+    environment:
+      - HOST=0.0.0.0
+      - PORT=4173
+      - GEV_ALLOWED_HOSTS=upstream,localhost,127.0.0.1
+      - GEV_KEY_SETUP_TRUSTED_PEERS=172.28.0.10,127.0.0.1
+    networks:
+      sidecar_net:
+        ipv4_address: 172.28.0.11
+    expose:
+      - "4173"
+    restart: unless-stopped
+
+  tile38:
+    image: tile38/tile38:latest
+    ports:
+      - "127.0.0.1:9851:9851"
+    volumes:
+      - tile38_data:/data
+    networks:
+      - sidecar_net
+    restart: unless-stopped
+
+  timescaledb:
+    image: timescale/timescaledb-ha:pg16
+    environment:
+      - POSTGRES_DB=gods_eye_sidecar
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - timescale_data:/home/postgres/pgdata/data
+      - ./sidecar/db-init:/docker-entrypoint-initdb.d:ro
+    networks:
+      - sidecar_net
+    restart: unless-stopped
+
+  proxy-tee:
+    build:
+      context: ./sidecar/proxy-tee
+      dockerfile: Dockerfile
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      - UPSTREAM_URL=http://upstream:4173
+      - PROXY_PORT=8080
+      - TILE38_HOST=tile38
+      - TILE38_PORT=9851
+      - DATABASE_URL=postgresql://postgres:postgres@timescaledb:5432/gods_eye_sidecar
+      - HEADLESS_ENABLED=true
+    volumes:
+      - ./sidecar/ui-bridge:/app/ui-bridge:ro
+    networks:
+      sidecar_net:
+        ipv4_address: 172.28.0.10
+    depends_on:
+      - upstream
+      - tile38
+      - timescaledb
+    restart: unless-stopped
+
+  mcp-gateway:
+    build:
+      context: ./sidecar/mcp-gateway
+      dockerfile: Dockerfile
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      - TILE38_HOST=tile38
+      - TILE38_PORT=9851
+      - DATABASE_URL=postgresql://postgres:postgres@timescaledb:5432/gods_eye_sidecar
+      - UPSTREAM_URL=http://upstream:4173
+      - MCP_GATEWAY_PORT=8000
+      - MCP_GATEWAY_HOST=0.0.0.0
+    networks:
+      - sidecar_net
+    depends_on:
+      - tile38
+      - timescaledb
+    restart: unless-stopped
+
+volumes:
+  tile38_data:
+  timescale_data:
+
+networks:
+  sidecar_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16

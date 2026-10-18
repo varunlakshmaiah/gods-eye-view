@@ -1,0 +1,27 @@
+{
+  "name": "proxy-tee",
+  "version": "1.0.0",
+  "description": "Gods-Eye-View Ingestion Mirror & Reverse Proxy",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.21.1",
+    "h3-js": "^4.1.0",
+    "http-proxy-middleware": "^3.0.3",
+    "ioredis": "^5.4.1",
+    "pg": "^8.13.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.7.5",
+    "@types/pg": "^8.11.10",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.3"
+  }
+}

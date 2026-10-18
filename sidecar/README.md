@@ -1,0 +1,175 @@
+# Gods-Eye-View Headless Spatio-Temporal Sidecar
+
+> **24/7 Headless World Engine & Visual Co-Pilot for `gods-eye-view`**
+
+---
+
+## 1. Upstream Isolation Contract
+
+This project is structured as a non-invasive sidecar to `bilawalsidhu/gods-eye-view`.
+- **Zero changes** to upstream source files (`src/`, `server/`, `package.json`, `vite.config.*`, `Dockerfile`, `compose.yaml`).
+- All sidecar components reside inside `/sidecar/` and `/docker-compose.sidecar.yml`.
+- **Zero merge conflicts** when pulling from `upstream/main`.
+
+### Upstream Sync SOP
+To pull and integrate upstream updates cleanly:
+```bash
+# Fetch and merge latest upstream changes
+git fetch upstream
+git merge upstream/main
+
+# Re-run sidecar tests and rebuild container images if needed
+docker compose -f docker-compose.sidecar.yml build
+docker compose -f docker-compose.sidecar.yml up -d
+```
+
+---
+
+## 2. Architecture Overview
+
+```
+                      +-----------------------------+
+                      |   Browser 3D Cesium Globe   |
+                      |   (window.__godsEyeView)    |
+                      +--------------+--------------+
+                                     |
+                         injected copilot-bridge.js
+                                     |
+                                     v (WebSocket)
++-----------------------+     +------+----------------+
+|  proxy-tee (Port 8080)|     | mcp-gateway (Port 8000)|
+|  - Reverse Proxy      |<--->| - 5 Spatial AI Tools  |
+|  - Ingestion Tap      |     | - SGP4 Propagator     |
+|  - Headless Cron Loop |     | - WebSocket Hub       |
++-----------+-----------+     +-------+---------------+
+            |                         |
+      +-----+-----+             +-----+-----+
+      |           |             |           |
+      v           v             v           v
++-----------+ +-----------+ +-------+ +-------------+
+| Upstream  | | Tile38    | | Fast  | | TimescaleDB |
+| Port 4173 | | Port 9851 | | MCP   | | Port 5432   |
+| (Vite Dev)| | (Hot Live)| | Server| | (Cold Hist) |
++-----------+ +-----------+ +-------+ +-------------+
+```
+
+### Storage Topology
+1. **Tile38 (Hot Spatial Tier):** In-memory sub-5ms geofencing, radius (`NEARBY`), and bounding-box queries with automatic TTL eviction.
+2. **TimescaleDB + PostGIS (Cold Archive Tier):** Hypertable partitioned into 1-day chunks, H3 hexagonal indexing (res 5 & res 9), and columnar compression for telemetry older than 24h.
+
+---
+
+## 3. Quick Start
+
+### Step 1: Prepare Environment
+```bash
+cp sidecar/.env.sidecar.example sidecar/.env.sidecar
+```
+
+### Step 2: Launch Stack
+```bash
+docker compose -f docker-compose.sidecar.yml up -d
+```
+
+### Step 3: Open the Visual Cockpit
+Open your browser to:
+**`http://localhost:8080`**
+
+*(Note: Navigate to the `proxy-tee` port `8080`, not `4173`. The proxy transparently renders the upstream app while injecting the Co-Pilot bridge and tapping live telemetry into Tile38 and TimescaleDB).*
+
+---
+
+## 4. MCP Tools & API Reference
+
+The `mcp-gateway` (Port `8000`) exposes deterministic spatial tools via MCP (SSE / stdio) and standard HTTP REST:
+
+### 1. `resolve_anchor`
+Resolves place names, airport codes (ICAO/IATA), callsigns, MMSIs, or coordinate strings to exact 4D coordinate fixes.
+```bash
+curl -X POST http://localhost:8000/api/tools/resolve_anchor \
+  -H "Content-Type: application/json" \
+  -d '{"query": "KSFO"}'
+```
+
+### 2. `get_scene_context`
+Returns a 250km distance-ranked Contact Roster with compass bearing (`N`, `NE`, `SW`), distance in km, closing/receding vector status, atmospheric weather, and overhead satellite look-angles.
+- Automatically routes to **Tile38** if `timestamp == "now"`.
+- Automatically routes to **TimescaleDB** if `timestamp` is historical.
+```bash
+curl -X POST http://localhost:8000/api/tools/get_scene_context \
+  -H "Content-Type: application/json" \
+  -d '{"lat": 37.7749, "lon": -122.4194, "radius_km": 100, "timestamp": "now"}'
+```
+
+### 3. `get_entity_trajectory`
+Reconstructs the full historical 4D trajectory for an aircraft or vessel over a designated time window.
+```bash
+curl -X POST http://localhost:8000/api/tools/get_entity_trajectory \
+  -H "Content-Type: application/json" \
+  -d '{
+    "entity_id": "a01234",
+    "start_time": "2024-01-01T00:00:00Z",
+    "end_time": "2024-01-01T04:00:00Z"
+  }'
+```
+
+### 4. `predict_satellite_passes`
+Calculates upcoming satellite passes and topocentric look-angles (azimuth, elevation, range) over an observer location using the headless SGP4 propagator.
+```bash
+curl -X POST http://localhost:8000/api/tools/predict_satellite_passes \
+  -H "Content-Type: application/json" \
+  -d '{"lat": 37.7749, "lon": -122.4194, "duration_hours": 6, "min_elevation_deg": 20.0}'
+```
+
+### 5. `control_visual_cockpit`
+Sends camera navigation, entity selection, layer toggling, or time-replay commands to the active browser UI via WebSocket.
+```bash
+curl -X POST http://localhost:8000/api/tools/control_visual_cockpit \
+  -H "Content-Type: application/json" \
+  -d '{
+    "action": "fly_to_coordinate",
+    "params": {"lat": 37.6188, "lon": -122.3754, "altitude_m": 3000, "duration_s": 2.5}
+  }'
+```
+
+---
+
+## 5. Headless Operation
+
+When no browser sessions are open, `proxy-tee` automatically enters **Headless Mode** after 60 seconds of inactivity. An internal keep-alive cron periodically polls upstream feeds at safe intervals (Flights: 15s, Vessels: 30s, FIRMS: 30m, CelesTrak: 6h) respecting upstream rate-limit governors.
+
+This ensures Tile38 and TimescaleDB maintain a continuous, 24/7 spatio-temporal archive even when no user has the browser open.
+
+---
+
+## 6. Upstream Invariants & Compatibility Architecture
+
+To guarantee **100% upstream project originality** without a single modification to upstream files (`src/`, `server/`, etc.), the sidecar explicitly accounts for several internal security and architectural gates found in `bilawalsidhu/gods-eye-view`:
+
+### 1. Same-Site Security Gate (`admitSameSiteRequest`)
+- **Upstream Files:** `src/localRequestGate.mjs`, `server/providers/common/same-site.js`
+- **Protected Routes:** `/api/realtime/token`, `/api/openai/hud-summary`, `/api/google/nearby-places`, `/api/tomtom/flow/*`, `/api/mapillary/*`
+- **Behavior:** Blocks any request containing proxy headers (`x-forwarded-for`, `via`, `forwarded`, `cf-*`) or mismatched `Origin` headers with a `403 Forbidden` ("Proxied requests are not accepted").
+- **Sidecar Compatibility:** `proxy-tee` strips all proxy headers and rewrites `Host: localhost:4173` and `Origin: http://localhost:4173` before forwarding, allowing upstream to validate requests identically to native execution.
+
+### 2. Key Setup Remote Peer Check (`admitKeySetupRequest`)
+- **Upstream Files:** `server/standalone/key-setup.js`
+- **Protected Routes:** `/api/setup/status`, `/api/setup/keys` (the "POWER UP" dashboard modal)
+- **Behavior:** Strictly checks that the connecting socket IP is either a loopback address or present in the `GEV_KEY_SETUP_TRUSTED_PEERS` environment variable.
+- **Sidecar Compatibility:** In `docker-compose.sidecar.yml`, `proxy-tee` is assigned static internal IP `172.28.0.10`, and `upstream` is configured with `GEV_KEY_SETUP_TRUSTED_PEERS: 172.28.0.10,127.0.0.1`. No upstream code is modified.
+
+### 3. Loopback-Pinned Upstream MCP Server
+- **Upstream Files:** `server/mcp/plugin.js` (`/mcp`)
+- **Behavior:** Upstream runs an embedded MCP server that checks `LOOPBACK_ADDRESSES` and verifies `hostUrl.port === localPort`. It does not read `GEV_KEY_SETUP_TRUSTED_PEERS`.
+- **Sidecar Compatibility:** The sidecar deploys its own high-performance, standalone `mcp-gateway` (FastAPI + FastMCP + SGP4) on port `8000`, completely decoupling AI tool execution from upstream's internal Vite plugin.
+
+### 4. Per-Socket Rate Limiting
+- **Upstream Files:** `server/providers/common/rate-limit.js`
+- **Behavior:** Upstream inspects `req.socket.remoteAddress` and intentionally ignores forwarded headers to calculate client rate limits (`GEV_RATELIMIT_OPENAI_PER_MIN=30`).
+- **Sidecar Compatibility:** Because all requests routed through `proxy-tee` arrive with the proxy container's IP, high-volume automated testing or multi-client environments should set `GEV_RATELIMIT_OPENAI_PER_MIN=0` in `.env` if limit exhaustion occurs.
+
+### 5. Vite Server Restart on Key Save
+- **Upstream Files:** `server/standalone/key-setup.js`
+- **Behavior:** Upstream calls `server.restart()` 250ms after writing keys to `.env`.
+- **Sidecar Compatibility:** `proxy-tee` handles the transient 1-2 second connection drop via an `error` interceptor that returns `503 UPSTREAM_RESTARTING` rather than crashing the proxy process or dropping sockets abruptly.
+

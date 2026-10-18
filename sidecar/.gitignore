@@ -1,0 +1,65 @@
+# ============================================================================
+# Sidecar Local Secrets & Environment
+# ============================================================================
+.env.sidecar
+.env.local
+*.env
+!*.env.example
+!.env.sidecar.example
+
+# ============================================================================
+# Database Volume Mounts (TimescaleDB & Tile38)
+# ============================================================================
+data/
+volumes/
+pgdata/
+timescale-data/
+tile38-data/
+appendonly.aof*
+*.rdb
+*.wal
+*.db
+*.sqlite
+*.sqlite3
+
+# ============================================================================
+# Cached Ephemeris, TLEs & Offline Geocoder Data
+# ============================================================================
+cache/
+tle-cache/
+*.tle
+*.omm
+*.grib2
+*.nc
+nominatim-data/
+
+# ============================================================================
+# Proxy-Tee (Node.js / TypeScript) Build & Dependencies
+# ============================================================================
+node_modules/
+dist/
+build/
+.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# ============================================================================
+# MCP-Gateway (Python) VirtualEnvs & Bytecode
+# ============================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ============================================================================
+# OS & Runtime Logs
+# ============================================================================
+logs/
+*.log
+*.pid
+.DS_Store

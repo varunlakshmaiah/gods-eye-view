@@ -159,5 +159,20 @@
     "include_sdr_rf": true,
     "include_alerts": true,
     "include_aois": true
+  },
+  "meshtastic_relay": {
+    "enabled": true,
+    "mode": "synthetic_mesh",
+    "channel_name": "LongFast",
+    "region": "IN_865",
+    "modem_preset": "LONG_FAST",
+    "tcp_host": "127.0.0.1",
+    "tcp_port": 4403,
+    "serial_port": "/dev/ttyUSB0",
+    "serial_baud": 115200,
+    "auto_forward_alerts": true,
+    "alert_min_severity": "WARNING",
+    "broadcast_interval_sec": 10.0,
+    "auto_start": true
   }
 }

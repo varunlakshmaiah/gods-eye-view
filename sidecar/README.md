@@ -299,14 +299,21 @@ curl -X GET http://localhost:8000/api/sdr/contacts
 - **`start_cot_stream` & `stop_cot_stream`**: Manage the background CoT streaming daemon.
 - **`broadcast_cot_test_marker`**: Inject instant tactical markers/pins onto Android ATAK-CIV screens.
 
-### 27. Upstream Federated Core Tools (30 Tools)
+### 27. Meshtastic / LoRa Off-Grid Tactical Relay (Tools 31-35)
+- **`get_meshtastic_status`**: Operating mode (`synthetic_mesh`, `tcp`, `serial`), tuned band (IN865/EU868/US915), modem preset, and packets transmitted/received.
+- **`get_mesh_nodes`**: Discover all active field nodes, rovers, repeaters, GPS fixes, battery levels, and SNR signal quality.
+- **`configure_meshtastic_relay`**: Reconfigure region, channel, network host/port, or USB serial device dynamically.
+- **`send_meshtastic_message`**: Transmit text messages across decentralized LoRa radio mesh to field teams without cellular or internet.
+- **`broadcast_tactical_alert_over_mesh`**: Compress and broadcast high-priority Sentinel tactical alerts to pocket LoRa radios.
+
+### 28. Upstream Federated Core Tools (30 Tools)
 `mcp-gateway` automatically discovers and proxies all 30 upstream God's Eye View MCP tools directly:
 - **`situation_brief`**: Unified operational picture (weather, quakes, fires, aircraft, ships, cyclones).
 - **`military_awareness`**: 250km radar perimeter of military aircraft, surface warships, and defense installations.
 - **`show_in_gods_eye_view`**: Live 3D Cesium camera and layer positioning with direct browser links.
 - **`get_earthquakes`**, **`get_weather`**, **`get_weather_radar`**, **`get_flights`**, **`get_ships`**, **`get_satellites`**, **`get_wildfires`**, **`get_air_quality`**, **`get_cctv`**, and more.
 
-All **60 tools** (30 Native Sidecar + 30 Upstream Federated) can be invoked via standard HTTP `POST /api/tools/{tool_name}` or directly through Claude Desktop / Cursor / Windsurf via MCP.
+All **65 tools** (35 Native Sidecar + 30 Upstream Federated) can be invoked via standard HTTP `POST /api/tools/{tool_name}` or directly through Claude Desktop / Cursor / Windsurf via MCP.
 
 ---
 
@@ -332,7 +339,7 @@ Connect Claude Desktop to God's Eye View with a single unified entry point in `~
 }
 ```
 
-Once connected, Claude Desktop will automatically see all **60 tools** (30 Sidecar Native tools + 30 Upstream Core tools), enabling autonomous intelligence retrieval, real-time spatial analytics, live 3D Cesium cockpit control, and ATAK mobile field coordination!
+Once connected, Claude Desktop will automatically see all **65 tools** (35 Sidecar Native tools + 30 Upstream Core tools), enabling autonomous intelligence retrieval, real-time spatial analytics, live 3D Cesium cockpit control, ATAK mobile field coordination, and off-grid LoRa mesh communications!
 
 ---
 

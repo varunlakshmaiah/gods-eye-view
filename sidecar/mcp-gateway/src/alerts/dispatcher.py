@@ -127,6 +127,15 @@ class AlertDispatcher:
             print(f"[AlertDispatcher] CoT dispatch error: {e}")
             results["atak_cot"] = False
 
+        # 7. Broadcast to Meshtastic LoRa Tactical Mesh
+        try:
+            from ..meshtastic.engine import meshtastic_engine
+            meshtastic_engine.broadcast_alert(alert.to_dict())
+            results["meshtastic_lora"] = True
+        except Exception as e:
+            print(f"[AlertDispatcher] Meshtastic dispatch error: {e}")
+            results["meshtastic_lora"] = False
+
         print(f"[AlertDispatcher] Dispatched [{alert.severity}] '{alert.title}' -> {results}")
         return results
 

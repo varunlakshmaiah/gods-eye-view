@@ -1,13 +1,13 @@
 # Gods-Eye-View Sidecar: Comprehensive Feature Catalog & Capabilities Specification
 
 > **A Sovereign Personal C6ISR (Command, Control, Communications, Computers, Cyber, Cognitive, Intelligence, Surveillance, Reconnaissance) Platform**  
-> *Current Release: `v1.10.0-sidecar` | 60 MCP Tools | ATAK / CoT Tactical Data Link | 100% Upstream Isolated*
+> *Current Release: `v1.11.0-sidecar` | 65 MCP Tools | Meshtastic LoRa Relay & ATAK CoT | 100% Upstream Isolated*
 
 ---
 
 ## 1. Executive Feature Overview
 
-The Gods-Eye-View Sidecar extends the Gods-Eye-View 3D geospatial engine into an autonomous, proactive personal intelligence sentinel. While upstream Gods-Eye-View acts as a visual browser globe, the Sidecar injects an enterprise multi-tier spatio-temporal data pipeline, an autonomous background watchstander daemon, kinematic vector analytics, line-of-sight radar physics, sovereign edge radio ingestion, and real-time Cursor-on-Target (CoT) tactical data link streaming to mobile ATAK-CIV, WinTAK, and iTAK endpoints.
+The Gods-Eye-View Sidecar extends the Gods-Eye-View 3D geospatial engine into an autonomous, proactive personal intelligence sentinel. While upstream Gods-Eye-View acts as a visual browser globe, the Sidecar injects an enterprise multi-tier spatio-temporal data pipeline, an autonomous background watchstander daemon, kinematic vector analytics, line-of-sight radar physics, sovereign edge radio ingestion, real-time Cursor-on-Target (CoT) tactical data link streaming to mobile ATAK-CIV, and long-range off-grid Meshtastic LoRa radio mesh relays.
 
 ```mermaid
 flowchart TB
@@ -19,6 +19,7 @@ flowchart TB
         S5["USGS (Global Seismic Sensors)"]
         S6["NOAA / GFS (Atmospheric Weather)"]
         S7["Physical RTL-SDR ($30 USB Dongle RF)"]
+        S8["Meshtastic LoRa Field Nodes (865/868/915MHz)"]
     end
 
     subgraph StorageTiers ["Spatio-Temporal Memory Stack"]
@@ -35,6 +36,7 @@ flowchart TB
         E5["RadarEngine (4/3 Earth Curvature Horizons)"]
         E6["SdrEngine (Sovereign 1090MHz/162MHz Feeder)"]
         E7["CotEngine (ATAK / CoT 2.0 UDP Broadcaster)"]
+        E8["MeshtasticEngine (LoRa Off-Grid Mesh Relay)"]
     end
 
     subgraph Dispatches ["Multi-Channel Command & Control"]
@@ -44,7 +46,8 @@ flowchart TB
         C4["Discord Webhooks (#tactical-alerts)"]
         C5["Slack Webhooks (#defense-ops)"]
         C6["ATAK-CIV / WinTAK / iTAK Mobile Mesh (UDP :4242)"]
-        C7["60 MCP Tools (Claude Desktop / Cursor / Windsurf)"]
+        C7["Meshtastic Decentralized LoRa Radios (Off-Grid Mesh)"]
+        C8["65 MCP Tools (Claude Desktop / Cursor / Windsurf)"]
     end
 
     DataSources --> StorageTiers
@@ -65,13 +68,14 @@ flowchart TB
 | **`v1.7.0-sidecar`** | **Phase 3.3: Pattern-of-Life (PoL)** | • Non-cooperative dark contact & transponder silence detector.<br/>• Sudden mid-air loss detection (> 1,000m / > 140 kts).<br/>• Dark vessel maritime chokepoint silence detection (> 2.0 kts).<br/>• Kinematic flight maneuver anomaly detector (> 3,500 fpm descents). | 16 | **46** |
 | **`v1.8.0-sidecar`** | **Phase 4.2: 3D Radar Horizons** | • Standard 4/3 effective Earth radius atmospheric refraction physics.<br/>• Radar horizon calculation: $d \approx 4.12 \times (\sqrt{h_{\text{radar}}} + \sqrt{h_{\text{target}}})$.<br/>• True 3D slant range & elevation angle spherical geometry.<br/>• Overhead cone of silence & horizon shadow detection.<br/>• 3D translucent radar domes, range rings & azimuth radials in Cesium. | 20 | **50** |
 | **`v1.9.0-sidecar`** | **Phase 4.3: Sovereign Edge SDR Ingestion** | • Plug-and-play RTL-SDR USB receiver ($30 hardware dongle).<br/>• 1090MHz ADS-B Mode-S & 162MHz Marine AIS radio reception.<br/>• Tri-mode ingest: `synthetic_rf`, `tcp_sbs` (port 30003), `http_json`.<br/>• Standalone feeder container (`sidecar/sdr/`).<br/>• 100% offline, unjammable sovereign tracking bubble. | 25 | **55** |
-| **`v1.10.0-sidecar`** | **Phase 4.4: ATAK / CoT Tactical Data Link** | • Cursor-on-Target (CoT 2.0 XML) serialization engine.<br/>• Sub-second UDP broadcast (`255.255.255.255:4242`) and unicast targets.<br/>• MIL-STD-2525 symbol mappings (civil/military air, sea, radar, AOIs).<br/>• Instant emergency 911 alerts (`t-x-d-a`) for 7700 squawks & Sentinel tripwires.<br/>• Civilian situational awareness on ATAK-CIV Android mobile devices worldwide. | **30** | **60** |
+| **`v1.10.0-sidecar`** | **Phase 4.4: ATAK / CoT Tactical Data Link** | • Cursor-on-Target (CoT 2.0 XML) serialization engine.<br/>• Sub-second UDP broadcast (`255.255.255.255:4242`) and unicast targets.<br/>• MIL-STD-2525 symbol mappings (civil/military air, sea, radar, AOIs).<br/>• Instant emergency 911 alerts (`t-x-d-a`) for 7700 squawks & Sentinel tripwires.<br/>• Civilian situational awareness on ATAK-CIV Android mobile devices worldwide. | 30 | **60** |
+| **`v1.11.0-sidecar`** | **Phase 4.5: Meshtastic / LoRa Tactical Relay** | • Off-grid LoRa radio mesh relay (865MHz IN, 868MHz EU, 915MHz US).<br/>• Decentralized field node discovery & live telemetry (GPS, SNR, Battery %).<br/>• Auto-forwarding critical Sentinel alerts over the mesh to handheld radios.<br/>• Ingestion into Tile38 & ATAK CoT as Friendly Ground Units (`a-f-G-U-C`).<br/>• Tri-mode support: `synthetic_mesh`, `tcp` (port 4403), `serial` (`/dev/ttyUSB0`). | **35** | **65** |
 
 ---
 
-## 3. Complete MCP Tool Catalog (55 Tools)
+## 3. Complete MCP Tool Catalog (65 Tools)
 
-All 55 tools are exposed via dual transports:
+All 65 tools are exposed via dual transports:
 1. **Model Context Protocol (MCP)** via SSE (`/mcp/sse`) and stdio (`python -m src.mcp_stdio`) for Claude Desktop, Cursor, and Windsurf.
 2. **REST API** via HTTP `POST /api/tools/{tool_name}` for scripts, curl, or webhooks.
 
@@ -294,6 +298,41 @@ All 55 tools are exposed via dual transports:
   * `remarks` *(string, optional)*: Detailed text shown in the ATAK radial contact card.
   * `cot_type` *(string, default: "a-f-A-C-F")*: MIL-STD-2525 type code.
 
+#### 31. `get_meshtastic_status`
+* **Purpose:** Checks Meshtastic / LoRa off-grid tactical relay operational status, tuned frequency band (e.g. IN865 / EU868 / US915), modem preset (`LONG_FAST`), and mesh packet statistics.
+* **Parameters:** None.
+
+#### 32. `get_mesh_nodes`
+* **Purpose:** Discovers all active Meshtastic field nodes, mobile rovers, repeater towers, live GPS coordinates, battery levels, and SNR signal quality across the radio mesh.
+* **Parameters:** None.
+
+#### 33. `configure_meshtastic_relay`
+* **Purpose:** Reconfigures LoRa mesh parameters dynamically, including operating mode (`synthetic_mesh`, `tcp`, `serial`), region, TCP host/port, serial device path, or alert auto-forwarding.
+* **Parameters:**
+  * `enabled` *(boolean, optional)*: Master toggle.
+  * `mode` *(string, optional)*: `synthetic_mesh`, `tcp`, `serial`.
+  * `region` *(string, optional)*: `IN_865`, `EU_868`, `US_915`.
+  * `channel_name` *(string, optional)*: Primary mesh channel (e.g. `LongFast`).
+  * `tcp_host` *(string, optional)*: Host/IP of network-connected Meshtastic node.
+  * `tcp_port` *(int, optional)*: Port number (default 4403).
+  * `serial_port` *(string, optional)*: Serial USB path (e.g. `/dev/ttyUSB0`).
+  * `auto_forward_alerts` *(boolean, optional)*: Automatically forward tactical alerts.
+  * `broadcast_interval_sec` *(float, optional)*: Telemetry loop interval in seconds.
+
+#### 34. `send_meshtastic_message`
+* **Purpose:** Transmits an alphanumeric message across the decentralized LoRa mesh to field teams, rovers, or base repeaters without requiring cell towers or internet.
+* **Parameters:**
+  * `text` *(string, required)*: Message content (< 200 chars for LoRa airtime efficiency).
+  * `to_node` *(string, default: "^all")*: Target node ID or `"^all"` for broadcast.
+  * `channel` *(int, default: 0)*: Channel index.
+
+#### 35. `broadcast_tactical_alert_over_mesh`
+* **Purpose:** Compresses and broadcasts high-priority tactical tripwire alerts (airspace conflicts, emergency squawks, dark contacts) across the off-grid LoRa radio mesh.
+* **Parameters:**
+  * `title` *(string, default: "Tactical Alert")*: Brief alert headline.
+  * `severity` *(string, default: "CRITICAL")*: Alert severity level.
+  * `message` *(string, default: "Airspace perimeter breach detected")*: Alert description.
+
 ---
 
 ### Section B: Upstream Federated Core Surveillance Tools (30 Tools)
@@ -432,6 +471,12 @@ sequenceDiagram
 | `POST` | `/api/cot/start` | Start CoT UDP streaming daemon | None |
 | `POST` | `/api/cot/stop` | Stop CoT UDP streaming daemon | None |
 | `POST` | `/api/cot/broadcast_test` | Inject instant test pin marker into ATAK | `{"callsign", "lat", "lon", "altitude_m", "remarks", "cot_type"}` |
+| `GET` | `/api/meshtastic/status` | Check LoRa mesh relay operational metrics | None |
+| `GET` | `/api/meshtastic/nodes` | List discovered field nodes, rovers & batteries | None |
+| `POST` | `/api/meshtastic/configure` | Configure LoRa region, mode, channel & ports | `{"enabled", "mode", "region", "channel_name", "tcp_host", "serial_port"}` |
+| `POST` | `/api/meshtastic/send` | Transmit text message across LoRa radio mesh | `{"text", "to_node", "channel"}` |
+| `POST` | `/api/meshtastic/start` | Start Meshtastic background relay daemon | None |
+| `POST` | `/api/meshtastic/stop` | Stop Meshtastic background relay daemon | None |
 | `WS` | `/ws/copilot` | Bi-directional WebSocket Co-Pilot Hub | Real-time viewport & command stream |
 
 ---
@@ -503,6 +548,21 @@ Located at [`sidecar/config/watchlists.json`](file:///Users/var/Documents/Projec
     "include_sdr_rf": true,
     "include_alerts": true,
     "include_aois": true
+  },
+  "meshtastic_relay": {
+    "enabled": true,
+    "mode": "synthetic_mesh",
+    "channel_name": "LongFast",
+    "region": "IN_865",
+    "modem_preset": "LONG_FAST",
+    "tcp_host": "127.0.0.1",
+    "tcp_port": 4403,
+    "serial_port": "/dev/ttyUSB0",
+    "serial_baud": 115200,
+    "auto_forward_alerts": true,
+    "alert_min_severity": "WARNING",
+    "broadcast_interval_sec": 10.0,
+    "auto_start": true
   }
 }
 ```
@@ -539,4 +599,23 @@ ATAK-CIV (Android Team Awareness Kit - Civil) is a free, open-source tactical ge
      -d '{"callsign": "MY_BASE", "lat": 12.9716, "lon": 77.5946, "remarks": "Personal TOC"}'
    ```
    The pin immediately drops onto your phone's ATAK offline topographical or satellite map with radial menu metadata.
+
+---
+
+## 8. Meshtastic / LoRa Off-Grid Tactical Mesh Guide
+
+### Zero-Infrastructure, Unjammable Long-Range Mesh Communications
+Meshtastic is a decentralized, off-grid LoRa radio communication mesh operating on license-free bands (865MHz India, 868MHz Europe, 915MHz Americas). With `v1.11.0-sidecar`, Gods-Eye-View acts as a **Tactical Operations Center (TOC) Gateway**, bridging satellite, radar, and air/sea contacts into low-power field radios over miles of line-of-sight terrain without cellular or internet.
+
+#### Operating Modes:
+* **`synthetic_mesh` (Default):** Runs an in-memory simulation generating realistic field patrol nodes (`ALPHA-1`, `ROVER-2`, `RELAY-3`), telemetry jitter, battery status, and SNR signal quality. All nodes are automatically fed into Tile38 and beamed into ATAK as friendly ground units (`a-f-G-U-C`).
+* **`tcp` (Wi-Fi/Ethernet LoRa Node):** Connects to a standalone Meshtastic radio on your local network (port 4403).
+* **`serial` (Direct USB Dongle):** Plugs into a low-cost ($25) USB LoRa radio (such as Heltec V3, LilyGO T-Beam, or RAK WisBlock) via `/dev/ttyUSB0`.
+
+#### Auto-Forwarding Tactical Alerts to Field Radios:
+Any critical Sentinel event (CPA proximity conflicts, transponder dropouts, squawk emergencies) is automatically compressed into an airtime-efficient LoRa packet (< 140 bytes) and broadcast across the mesh:
+```text
+🚨 [CRITICAL] Airspace Conflict: 8014bb ↔ 7bc008 CPA: 1.2km TCPA: 4.5m
+```
+Field teams carrying small pocket LoRa radios receive this alert instantly on their device screens even in remote valleys, forests, or disaster zones.
 

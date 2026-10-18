@@ -29,6 +29,7 @@ from .pol.engine import pol_engine
 from .radar.engine import radar_engine
 from .sdr.engine import sdr_engine
 from .cot.engine import cot_engine
+from .meshtastic.engine import meshtastic_engine
 
 # ----------------------------------------------------------------------------
 # Lifespan Lifecycle
@@ -52,8 +53,10 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(tripwire_engine.start())
     asyncio.create_task(periodic_intsum_briefing())
     asyncio.create_task(cot_engine.start())
+    asyncio.create_task(meshtastic_engine.start())
     yield
     print("[McpGateway] Closing router connections...")
+    meshtastic_engine.stop()
     cot_engine.stop()
     sdr_engine.stop()
     tripwire_engine.stop()
@@ -173,6 +176,22 @@ class CotTestRequest(BaseModel):
     altitude_m: float = Field(1500.0, description="Altitude in meters")
     remarks: str = Field("Tactical CoT Test marker from Gods-Eye-View Sidecar", description="Remarks text")
     cot_type: str = Field("a-f-A-C-F", description="MIL-STD-2525 symbol code (e.g. a-f-A-C-F, a-u-A, t-x-d-a)")
+
+class MeshtasticConfigRequest(BaseModel):
+    enabled: Optional[bool] = Field(None, description="Enable or disable Meshtastic relay")
+    mode: Optional[str] = Field(None, description="Operating mode: synthetic_mesh, tcp, or serial")
+    region: Optional[str] = Field(None, description="LoRa region: IN_865, EU_868, US_915, etc.")
+    channel_name: Optional[str] = Field(None, description="Primary channel name (default LongFast)")
+    tcp_host: Optional[str] = Field(None, description="IP address of Wi-Fi/Ethernet Meshtastic node")
+    tcp_port: Optional[int] = Field(None, description="TCP port for Meshtastic device (default 4403)")
+    serial_port: Optional[str] = Field(None, description="Serial USB device path (e.g. /dev/ttyUSB0)")
+    auto_forward_alerts: Optional[bool] = Field(None, description="Automatically forward high-priority alerts")
+    broadcast_interval_sec: Optional[float] = Field(None, description="Telemetry update interval in seconds")
+
+class MeshtasticSendRequest(BaseModel):
+    text: str = Field(..., description="Alphanumeric text message to broadcast across the LoRa mesh")
+    to_node: Optional[str] = Field("^all", description="Target node ID (e.g. '!4a18b01a' or '^all')")
+    channel: Optional[int] = Field(0, description="Channel index (default 0)")
 
 # ----------------------------------------------------------------------------
 # Tool Implementation Functions
@@ -630,6 +649,44 @@ async def api_broadcast_cot_test(req: CotTestRequest):
     cot_engine.send_cot_packet(xml)
     return {"status": "broadcast_sent", "callsign": req.callsign, "lat": req.lat, "lon": req.lon, "xml": xml}
 
+@app.get("/api/meshtastic/status")
+async def api_get_meshtastic_status():
+    return meshtastic_engine.get_status()
+
+@app.get("/api/meshtastic/nodes")
+async def api_get_meshtastic_nodes():
+    return meshtastic_engine.get_nodes()
+
+@app.post("/api/meshtastic/configure")
+async def api_configure_meshtastic(req: MeshtasticConfigRequest):
+    return meshtastic_engine.configure(
+        enabled=req.enabled,
+        mode=req.mode,
+        region=req.region,
+        channel_name=req.channel_name,
+        tcp_host=req.tcp_host,
+        tcp_port=req.tcp_port,
+        serial_port=req.serial_port,
+        auto_forward_alerts=req.auto_forward_alerts,
+        broadcast_interval_sec=req.broadcast_interval_sec,
+    )
+
+@app.post("/api/meshtastic/send")
+async def api_send_meshtastic_message(req: MeshtasticSendRequest):
+    return meshtastic_engine.send_message(
+        text=req.text,
+        to_node=req.to_node or "^all",
+        channel=req.channel or 0,
+    )
+
+@app.post("/api/meshtastic/start")
+async def api_start_meshtastic():
+    return await meshtastic_engine.start()
+
+@app.post("/api/meshtastic/stop")
+async def api_stop_meshtastic():
+    return meshtastic_engine.stop()
+
 @app.get("/api/mcp/tools")
 async def api_list_all_tools():
     """List all registered tools (both native and federated) with their schemas."""
@@ -968,6 +1025,78 @@ async def broadcast_cot_test_marker(
         "lon": lon,
         "cot_type": cot_type,
         "xml_sample": xml,
+    }, indent=2)
+
+@mcp_server.tool()
+async def get_meshtastic_status() -> str:
+    """Check Meshtastic / LoRa off-grid tactical relay status, active channel, modem preset, and packet statistics."""
+    res = meshtastic_engine.get_status()
+    import json
+    return json.dumps(res, indent=2)
+
+@mcp_server.tool()
+async def get_mesh_nodes() -> str:
+    """Discover active Meshtastic field nodes, mobile rovers, team positions, battery levels, and SNR signal quality."""
+    res = meshtastic_engine.get_nodes()
+    import json
+    return json.dumps(res, indent=2)
+
+@mcp_server.tool()
+async def configure_meshtastic_relay(
+    enabled: Optional[bool] = None,
+    mode: Optional[str] = None,
+    region: Optional[str] = None,
+    channel_name: Optional[str] = None,
+    tcp_host: Optional[str] = None,
+    tcp_port: Optional[int] = None,
+    serial_port: Optional[str] = None,
+    auto_forward_alerts: Optional[bool] = None,
+    broadcast_interval_sec: Optional[float] = None,
+) -> str:
+    """Configure Meshtastic relay parameters (region e.g. IN_865/EU_868/US_915, channel, TCP host/port, or serial port)."""
+    res = meshtastic_engine.configure(
+        enabled=enabled,
+        mode=mode,
+        region=region,
+        channel_name=channel_name,
+        tcp_host=tcp_host,
+        tcp_port=tcp_port,
+        serial_port=serial_port,
+        auto_forward_alerts=auto_forward_alerts,
+        broadcast_interval_sec=broadcast_interval_sec,
+    )
+    import json
+    return json.dumps(res, indent=2)
+
+@mcp_server.tool()
+async def send_meshtastic_message(
+    text: str,
+    to_node: str = "^all",
+    channel: int = 0,
+) -> str:
+    """Broadcast an alphanumeric message across the decentralized LoRa mesh to field teams, rovers, or base stations."""
+    res = meshtastic_engine.send_message(text=text, to_node=to_node, channel=channel)
+    import json
+    return json.dumps(res, indent=2)
+
+@mcp_server.tool()
+async def broadcast_tactical_alert_over_mesh(
+    title: str = "Tactical Alert",
+    severity: str = "CRITICAL",
+    message: str = "Airspace perimeter breach detected",
+) -> str:
+    """Compress and broadcast an emergency high-priority tactical alert across the off-grid LoRa radio mesh."""
+    meshtastic_engine.broadcast_alert({
+        "title": title,
+        "severity": severity,
+        "message": message,
+    })
+    import json
+    return json.dumps({
+        "status": "alert_broadcast_sent",
+        "title": title,
+        "severity": severity,
+        "message": message,
     }, indent=2)
 
 # Mount SSE app on FastAPI: exposes /mcp/sse and /mcp/messages

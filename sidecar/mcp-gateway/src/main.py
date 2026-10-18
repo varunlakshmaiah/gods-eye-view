@@ -291,50 +291,51 @@ async def websocket_copilot_endpoint(websocket: WebSocket):
         hub.disconnect(websocket)
 
 # ----------------------------------------------------------------------------
-# FastMCP Server Registration (SSE and stdio support)
 # ----------------------------------------------------------------------------
-try:
-    from mcp.server.fastmcp import FastMCP
-    mcp = FastMCP("GodsEyeView-Sidecar")
+# MCPServer Registration (mcp 2.x - SSE and STDIO support)
+# ----------------------------------------------------------------------------
+from mcp.server.mcpserver import MCPServer
 
-    @mcp.tool()
-    async def resolve_anchor(query: str, timestamp: Optional[str] = None) -> str:
-        """Resolve place names, airport codes, callsigns, MMSIs to 4D coordinates."""
-        res = await tool_resolve_anchor(query, timestamp)
-        import json
-        return json.dumps(res, indent=2)
+mcp_server = MCPServer("gods-eye-view")
 
-    @mcp.tool()
-    async def get_scene_context(
-        lat: float, lon: float, radius_km: float = 100.0, timestamp: str = "now", layers: List[str] = ["all"]
-    ) -> str:
-        """Query 250km radius contact roster, weather digest, and overhead satellites."""
-        res = await tool_get_scene_context(lat, lon, radius_km, timestamp, layers)
-        import json
-        return json.dumps(res, indent=2)
+@mcp_server.tool()
+async def resolve_anchor(query: str, timestamp: Optional[str] = None) -> str:
+    """Resolve place names, airport codes (ICAO/IATA), callsigns, or MMSIs to exact coordinates."""
+    res = await tool_resolve_anchor(query, timestamp)
+    import json
+    return json.dumps(res, indent=2)
 
-    @mcp.tool()
-    async def get_entity_trajectory(entity_id: str, start_time: str, end_time: str) -> str:
-        """Reconstruct 4D historical path/trajectory for an entity from TimescaleDB."""
-        res = await tool_get_entity_trajectory(entity_id, start_time, end_time)
-        import json
-        return json.dumps(res, indent=2)
+@mcp_server.tool()
+async def get_scene_context(
+    lat: float, lon: float, radius_km: float = 100.0, timestamp: str = "now", layers: Optional[List[str]] = None
+) -> str:
+    """Query 250km radius contact roster with bearings, closing vectors, weather, and overhead satellites."""
+    res = await tool_get_scene_context(lat, lon, radius_km, timestamp, layers or ["all"])
+    import json
+    return json.dumps(res, indent=2)
 
-    @mcp.tool()
-    async def predict_satellite_passes(
-        lat: float, lon: float, start_time: str = "now", duration_hours: int = 12, min_elevation_deg: float = 15.0
-    ) -> str:
-        """Calculate overhead satellite passes and look-angles using headless SGP4 propagator."""
-        res = await tool_predict_satellite_passes(lat, lon, start_time, duration_hours, min_elevation_deg)
-        import json
-        return json.dumps(res, indent=2)
+@mcp_server.tool()
+async def get_entity_trajectory(entity_id: str, start_time: str, end_time: str) -> str:
+    """Reconstruct 4D historical waypoint trajectory for an aircraft or vessel from TimescaleDB."""
+    res = await tool_get_entity_trajectory(entity_id, start_time, end_time)
+    import json
+    return json.dumps(res, indent=2)
 
-    @mcp.tool()
-    async def control_visual_cockpit(action: str, params: Dict[str, Any]) -> str:
-        """Control active 3D Cesium globe (fly_to_coordinate, select_entity, toggle_layer, replay)."""
-        res = await tool_control_visual_cockpit(action, params)
-        import json
-        return json.dumps(res, indent=2)
+@mcp_server.tool()
+async def predict_satellite_passes(
+    lat: float, lon: float, start_time: str = "now", duration_hours: int = 12, min_elevation_deg: float = 15.0
+) -> str:
+    """Calculate upcoming overhead satellite passes and look-angles (azimuth, elevation) via SGP4."""
+    res = await tool_predict_satellite_passes(lat, lon, start_time, duration_hours, min_elevation_deg)
+    import json
+    return json.dumps(res, indent=2)
 
-except Exception as e:
-    print(f"[McpGateway] Note: FastMCP registration info: {e}")
+@mcp_server.tool()
+async def control_visual_cockpit(action: str, params: Dict[str, Any]) -> str:
+    """Send camera flight, entity selection, layer toggle, or time replay to browser globe via WebSocket."""
+    res = await tool_control_visual_cockpit(action, params)
+    import json
+    return json.dumps(res, indent=2)
+
+# Mount SSE app on FastAPI: exposes /mcp/sse and /mcp/messages
+app.mount("/mcp", mcp_server.sse_app())

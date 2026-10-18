@@ -118,6 +118,15 @@ class AlertDispatcher:
         except Exception as e:
             print(f"[AlertDispatcher] DB log error: {e}")
 
+        # 6. Broadcast to ATAK via Cursor-on-Target (CoT)
+        try:
+            from ..cot.engine import cot_engine
+            cot_engine.broadcast_alert(alert.to_dict())
+            results["atak_cot"] = True
+        except Exception as e:
+            print(f"[AlertDispatcher] CoT dispatch error: {e}")
+            results["atak_cot"] = False
+
         print(f"[AlertDispatcher] Dispatched [{alert.severity}] '{alert.title}' -> {results}")
         return results
 

@@ -28,6 +28,7 @@ from .kinematics.cpa import calculate_pairwise_cpa, calculate_aoi_intercept, sca
 from .pol.engine import pol_engine
 from .radar.engine import radar_engine
 from .sdr.engine import sdr_engine
+from .cot.engine import cot_engine
 
 # ----------------------------------------------------------------------------
 # Lifespan Lifecycle
@@ -50,8 +51,10 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(poll_and_federate(mcp_server, f"{upstream_url}/mcp"))
     asyncio.create_task(tripwire_engine.start())
     asyncio.create_task(periodic_intsum_briefing())
+    asyncio.create_task(cot_engine.start())
     yield
     print("[McpGateway] Closing router connections...")
+    cot_engine.stop()
     sdr_engine.stop()
     tripwire_engine.stop()
     await router.close()
@@ -154,6 +157,22 @@ class SdrConfigRequest(BaseModel):
     source_port: Optional[int] = Field(None, description="Port number for SBS TCP feed (default 30003)")
     http_url: Optional[str] = Field(None, description="HTTP URL for aircraft.json polling")
     poll_interval_sec: Optional[float] = Field(None, description="Polling interval in seconds")
+
+class CotConfigRequest(BaseModel):
+    enabled: Optional[bool] = Field(None, description="Enable or disable CoT broadcast")
+    target_host: Optional[str] = Field(None, description="Target host or broadcast IP (default 255.255.255.255)")
+    target_port: Optional[int] = Field(None, description="Target UDP port (default 4242)")
+    unicast_targets: Optional[List[str]] = Field(None, description="List of target phone or server IPs")
+    broadcast_interval_sec: Optional[float] = Field(None, description="Broadcast interval in seconds")
+    stale_offset_sec: Optional[int] = Field(None, description="Entity stale expiration offset in seconds")
+
+class CotTestRequest(BaseModel):
+    callsign: str = Field("TEST_TARGET", description="Target callsign")
+    lat: float = Field(12.9716, description="Target latitude")
+    lon: float = Field(77.5946, description="Target longitude")
+    altitude_m: float = Field(1500.0, description="Altitude in meters")
+    remarks: str = Field("Tactical CoT Test marker from Gods-Eye-View Sidecar", description="Remarks text")
+    cot_type: str = Field("a-f-A-C-F", description="MIL-STD-2525 symbol code (e.g. a-f-A-C-F, a-u-A, t-x-d-a)")
 
 # ----------------------------------------------------------------------------
 # Tool Implementation Functions
@@ -572,6 +591,45 @@ async def api_stop_sdr():
 async def api_get_sdr_contacts():
     return {"contacts": sdr_engine.get_contacts()}
 
+@app.get("/api/cot/status")
+async def api_get_cot_status():
+    return cot_engine.get_status()
+
+@app.post("/api/cot/configure")
+async def api_configure_cot(req: CotConfigRequest):
+    return cot_engine.configure(
+        enabled=req.enabled,
+        target_host=req.target_host,
+        target_port=req.target_port,
+        unicast_targets=req.unicast_targets,
+        broadcast_interval_sec=req.broadcast_interval_sec,
+        stale_offset_sec=req.stale_offset_sec,
+    )
+
+@app.post("/api/cot/start")
+async def api_start_cot():
+    return await cot_engine.start()
+
+@app.post("/api/cot/stop")
+async def api_stop_cot():
+    return cot_engine.stop()
+
+@app.post("/api/cot/broadcast_test")
+async def api_broadcast_cot_test(req: CotTestRequest):
+    from .cot.engine import build_cot_xml
+    xml = build_cot_xml(
+        uid=f"TEST_{req.callsign}",
+        cot_type=req.cot_type,
+        lat=req.lat,
+        lon=req.lon,
+        hae_m=req.altitude_m,
+        callsign=req.callsign,
+        remarks=req.remarks,
+        stale_sec=120,
+    )
+    cot_engine.send_cot_packet(xml)
+    return {"status": "broadcast_sent", "callsign": req.callsign, "lat": req.lat, "lon": req.lon, "xml": xml}
+
 @app.get("/api/mcp/tools")
 async def api_list_all_tools():
     """List all registered tools (both native and federated) with their schemas."""
@@ -837,6 +895,80 @@ async def get_sdr_contacts() -> str:
     res = sdr_engine.get_contacts()
     import json
     return json.dumps(res, indent=2)
+
+@mcp_server.tool()
+async def get_cot_status() -> str:
+    """Check Cursor-on-Target (CoT) / ATAK broadcaster metrics, transmission rate, and network targets."""
+    res = cot_engine.get_status()
+    import json
+    return json.dumps(res, indent=2)
+
+@mcp_server.tool()
+async def configure_cot_broadcaster(
+    enabled: Optional[bool] = None,
+    target_host: Optional[str] = None,
+    target_port: Optional[int] = None,
+    unicast_targets: Optional[List[str]] = None,
+    broadcast_interval_sec: Optional[float] = None,
+    stale_offset_sec: Optional[int] = None,
+) -> str:
+    """Configure CoT / ATAK broadcaster UDP target host, port (default 4242), unicast phone IPs, or interval."""
+    res = cot_engine.configure(
+        enabled=enabled,
+        target_host=target_host,
+        target_port=target_port,
+        unicast_targets=unicast_targets,
+        broadcast_interval_sec=broadcast_interval_sec,
+        stale_offset_sec=stale_offset_sec,
+    )
+    import json
+    return json.dumps(res, indent=2)
+
+@mcp_server.tool()
+async def start_cot_stream() -> str:
+    """Start streaming live CoT XML packets over UDP port 4242 to ATAK, WinTAK, and iTAK clients."""
+    res = await cot_engine.start()
+    import json
+    return json.dumps(res, indent=2)
+
+@mcp_server.tool()
+async def stop_cot_stream() -> str:
+    """Stop CoT / ATAK UDP broadcast stream."""
+    res = cot_engine.stop()
+    import json
+    return json.dumps(res, indent=2)
+
+@mcp_server.tool()
+async def broadcast_cot_test_marker(
+    callsign: str = "TEST_PIN",
+    lat: float = 12.9716,
+    lon: float = 77.5946,
+    altitude_m: float = 1500.0,
+    remarks: str = "Test marker from Gods-Eye-View Sidecar",
+    cot_type: str = "a-f-A-C-F",
+) -> str:
+    """Broadcast an immediate test CoT marker to all ATAK/WinTAK phones and devices on the network."""
+    from .cot.engine import build_cot_xml
+    xml = build_cot_xml(
+        uid=f"TEST_{callsign}",
+        cot_type=cot_type,
+        lat=lat,
+        lon=lon,
+        hae_m=altitude_m,
+        callsign=callsign,
+        remarks=remarks,
+        stale_sec=180,
+    )
+    cot_engine.send_cot_packet(xml)
+    import json
+    return json.dumps({
+        "status": "broadcast_sent",
+        "callsign": callsign,
+        "lat": lat,
+        "lon": lon,
+        "cot_type": cot_type,
+        "xml_sample": xml,
+    }, indent=2)
 
 # Mount SSE app on FastAPI: exposes /mcp/sse and /mcp/messages
 app.mount("/mcp", mcp_server.sse_app())

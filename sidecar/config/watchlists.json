@@ -145,5 +145,19 @@
     "poll_interval_sec": 3.0,
     "http_url": "http://127.0.0.1:8080/data/aircraft.json",
     "auto_start": false
+  },
+  "cot_broadcast": {
+    "enabled": true,
+    "target_host": "255.255.255.255",
+    "target_port": 4242,
+    "unicast_targets": ["127.0.0.1", "host.docker.internal"],
+    "broadcast_interval_sec": 3.0,
+    "stale_offset_sec": 60,
+    "auto_start": true,
+    "include_flights": true,
+    "include_vessels": true,
+    "include_sdr_rf": true,
+    "include_alerts": true,
+    "include_aois": true
   }
 }

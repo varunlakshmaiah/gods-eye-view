@@ -180,10 +180,9 @@ class SdrEngine:
             return
 
         # 1. Tile38 Hot In-Memory Geo-cache
-        try:
-            r = router.get_tile38_sync()
-            if r:
-                r.execute_command(
+        if router.redis:
+            try:
+                await router.redis.execute_command(
                     "SET", "flights", hex_id,
                     "FIELD", "alt", alt_m,
                     "FIELD", "hdg", hdg,
@@ -193,8 +192,8 @@ class SdrEngine:
                     "EX", 120,
                     "POINT", lat, lon
                 )
-        except Exception as e:
-            pass
+            except Exception as e:
+                pass
 
         # 2. TimescaleDB Telemetry History
         if router.pg_pool:

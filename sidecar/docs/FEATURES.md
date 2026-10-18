@@ -1,13 +1,13 @@
 # Gods-Eye-View Sidecar: Comprehensive Feature Catalog & Capabilities Specification
 
 > **A Sovereign Personal C6ISR (Command, Control, Communications, Computers, Cyber, Cognitive, Intelligence, Surveillance, Reconnaissance) Platform**  
-> *Current Release: `v1.9.0-sidecar` | 55 MCP Tools | 100% Upstream Isolated*
+> *Current Release: `v1.10.0-sidecar` | 60 MCP Tools | ATAK / CoT Tactical Data Link | 100% Upstream Isolated*
 
 ---
 
 ## 1. Executive Feature Overview
 
-The Gods-Eye-View Sidecar extends the Gods-Eye-View 3D geospatial engine into an autonomous, proactive personal intelligence sentinel. While upstream Gods-Eye-View acts as a visual browser globe, the Sidecar injects an enterprise multi-tier spatio-temporal data pipeline, an autonomous background watchstander daemon, kinematic vector analytics, line-of-sight radar physics, and sovereign edge radio ingestion.
+The Gods-Eye-View Sidecar extends the Gods-Eye-View 3D geospatial engine into an autonomous, proactive personal intelligence sentinel. While upstream Gods-Eye-View acts as a visual browser globe, the Sidecar injects an enterprise multi-tier spatio-temporal data pipeline, an autonomous background watchstander daemon, kinematic vector analytics, line-of-sight radar physics, sovereign edge radio ingestion, and real-time Cursor-on-Target (CoT) tactical data link streaming to mobile ATAK-CIV, WinTAK, and iTAK endpoints.
 
 ```mermaid
 flowchart TB
@@ -34,6 +34,7 @@ flowchart TB
         E4["PolEngine (Dark Vessel & Silence Detector)"]
         E5["RadarEngine (4/3 Earth Curvature Horizons)"]
         E6["SdrEngine (Sovereign 1090MHz/162MHz Feeder)"]
+        E7["CotEngine (ATAK / CoT 2.0 UDP Broadcaster)"]
     end
 
     subgraph Dispatches ["Multi-Channel Command & Control"]
@@ -42,7 +43,8 @@ flowchart TB
         C3["Telegram Bot Push Notifications"]
         C4["Discord Webhooks (#tactical-alerts)"]
         C5["Slack Webhooks (#defense-ops)"]
-        C6["55 MCP Tools (Claude Desktop / Cursor / Windsurf)"]
+        C6["ATAK-CIV / WinTAK / iTAK Mobile Mesh (UDP :4242)"]
+        C7["60 MCP Tools (Claude Desktop / Cursor / Windsurf)"]
     end
 
     DataSources --> StorageTiers
@@ -62,7 +64,8 @@ flowchart TB
 | **`v1.6.0-sidecar`** | **Phase 4.1: Kinematic CPA / TCPA** | • 4D Closest Point of Approach (CPA) geometric solver.<br/>• Time-to-CPA (TCPA) in seconds & closing velocities.<br/>• Proximity separation conflict scanner (TCAS-style).<br/>• Real-time Tile38 hot cache entity anchor lookups. | 14 | **44** |
 | **`v1.7.0-sidecar`** | **Phase 3.3: Pattern-of-Life (PoL)** | • Non-cooperative dark contact & transponder silence detector.<br/>• Sudden mid-air loss detection (> 1,000m / > 140 kts).<br/>• Dark vessel maritime chokepoint silence detection (> 2.0 kts).<br/>• Kinematic flight maneuver anomaly detector (> 3,500 fpm descents). | 16 | **46** |
 | **`v1.8.0-sidecar`** | **Phase 4.2: 3D Radar Horizons** | • Standard 4/3 effective Earth radius atmospheric refraction physics.<br/>• Radar horizon calculation: $d \approx 4.12 \times (\sqrt{h_{\text{radar}}} + \sqrt{h_{\text{target}}})$.<br/>• True 3D slant range & elevation angle spherical geometry.<br/>• Overhead cone of silence & horizon shadow detection.<br/>• 3D translucent radar domes, range rings & azimuth radials in Cesium. | 20 | **50** |
-| **`v1.9.0-sidecar`** | **Phase 4.3: Sovereign Edge SDR Ingestion** | • Plug-and-play RTL-SDR USB receiver ($30 hardware dongle).<br/>• 1090MHz ADS-B Mode-S & 162MHz Marine AIS radio reception.<br/>• Tri-mode ingest: `synthetic_rf`, `tcp_sbs` (port 30003), `http_json`.<br/>• Standalone feeder container (`sidecar/sdr/`).<br/>• 100% offline, unjammable sovereign tracking bubble. | **25** | **55** |
+| **`v1.9.0-sidecar`** | **Phase 4.3: Sovereign Edge SDR Ingestion** | • Plug-and-play RTL-SDR USB receiver ($30 hardware dongle).<br/>• 1090MHz ADS-B Mode-S & 162MHz Marine AIS radio reception.<br/>• Tri-mode ingest: `synthetic_rf`, `tcp_sbs` (port 30003), `http_json`.<br/>• Standalone feeder container (`sidecar/sdr/`).<br/>• 100% offline, unjammable sovereign tracking bubble. | 25 | **55** |
+| **`v1.10.0-sidecar`** | **Phase 4.4: ATAK / CoT Tactical Data Link** | • Cursor-on-Target (CoT 2.0 XML) serialization engine.<br/>• Sub-second UDP broadcast (`255.255.255.255:4242`) and unicast targets.<br/>• MIL-STD-2525 symbol mappings (civil/military air, sea, radar, AOIs).<br/>• Instant emergency 911 alerts (`t-x-d-a`) for 7700 squawks & Sentinel tripwires.<br/>• Civilian situational awareness on ATAK-CIV Android mobile devices worldwide. | **30** | **60** |
 
 ---
 
@@ -259,6 +262,38 @@ All 55 tools are exposed via dual transports:
 #### 25. `start_sdr_stream` & `stop_sdr_stream` & `get_sdr_contacts`
 * **Purpose:** Starts, stops, or retrieves active contacts from the local sovereign edge SDR receiver. Contacts include RF signal strength (`rssi_dbfs`) and message counts.
 
+#### 26. `get_cot_status`
+* **Purpose:** Checks Cursor-on-Target (CoT) / ATAK broadcaster metrics, transmission rate (Hz), total packets sent, and active broadcast/unicast targets.
+* **Parameters:** None.
+
+#### 27. `configure_cot_broadcaster`
+* **Purpose:** Configures CoT / ATAK broadcaster UDP target host, port (default 4242), unicast phone IPs, stale offsets, or streaming intervals.
+* **Parameters:**
+  * `enabled` *(boolean, optional)*: Master toggle for background CoT streaming.
+  * `target_host` *(string, optional)*: Subnet broadcast IP (e.g. `255.255.255.255`).
+  * `target_port` *(int, optional)*: UDP port (standard ATAK port is `4242`).
+  * `unicast_targets` *(list of strings, optional)*: Specific Android device IP addresses.
+  * `broadcast_interval_sec` *(float, optional)*: Broadcast rate in seconds (default `3.0`).
+  * `stale_offset_sec` *(int, optional)*: Time before contacts expire in ATAK if not refreshed (default `60`).
+
+#### 28. `start_cot_stream`
+* **Purpose:** Starts the background CoT streaming daemon, pushing real-time MIL-STD-2525 tracks to all ATAK, WinTAK, and iTAK endpoints on the network.
+* **Parameters:** None.
+
+#### 29. `stop_cot_stream`
+* **Purpose:** Stops the CoT / ATAK UDP broadcast stream and releases network sockets.
+* **Parameters:** None.
+
+#### 30. `broadcast_cot_test_marker`
+* **Purpose:** Broadcasts an immediate test CoT marker with custom callsign, coordinates, and remarks to verify phone connectivity and map rendering.
+* **Parameters:**
+  * `callsign` *(string, default: "TEST_PIN")*: Marker label.
+  * `lat` *(float, default: 12.9716)*: Target latitude.
+  * `lon` *(float, default: 77.5946)*: Target longitude.
+  * `altitude_m` *(float, default: 1500.0)*: Altitude in meters (HAE).
+  * `remarks` *(string, optional)*: Detailed text shown in the ATAK radial contact card.
+  * `cot_type` *(string, default: "a-f-A-C-F")*: MIL-STD-2525 type code.
+
 ---
 
 ### Section B: Upstream Federated Core Surveillance Tools (30 Tools)
@@ -392,6 +427,11 @@ sequenceDiagram
 | `POST` | `/api/sdr/start` | Start sovereign edge SDR ingestion | None |
 | `POST` | `/api/sdr/stop` | Stop sovereign edge SDR ingestion | None |
 | `GET` | `/api/sdr/contacts` | Retrieve contacts received via local SDR | None |
+| `GET` | `/api/cot/status` | Check CoT / ATAK broadcaster status & rate | None |
+| `POST` | `/api/cot/configure` | Configure CoT port, broadcast targets & timing | `{"enabled", "target_host", "target_port", "unicast_targets", "broadcast_interval_sec"}` |
+| `POST` | `/api/cot/start` | Start CoT UDP streaming daemon | None |
+| `POST` | `/api/cot/stop` | Stop CoT UDP streaming daemon | None |
+| `POST` | `/api/cot/broadcast_test` | Inject instant test pin marker into ATAK | `{"callsign", "lat", "lon", "altitude_m", "remarks", "cot_type"}` |
 | `WS` | `/ws/copilot` | Bi-directional WebSocket Co-Pilot Hub | Real-time viewport & command stream |
 
 ---
@@ -449,6 +489,54 @@ Located at [`sidecar/config/watchlists.json`](file:///Users/var/Documents/Projec
     "poll_interval_sec": 3.0,
     "http_url": "http://127.0.0.1:8080/data/aircraft.json",
     "auto_start": false
+  },
+  "cot_broadcast": {
+    "enabled": true,
+    "target_host": "255.255.255.255",
+    "target_port": 4242,
+    "unicast_targets": ["127.0.0.1", "host.docker.internal"],
+    "broadcast_interval_sec": 3.0,
+    "stale_offset_sec": 60,
+    "auto_start": true,
+    "include_flights": true,
+    "include_vessels": true,
+    "include_sdr_rf": true,
+    "include_alerts": true,
+    "include_aois": true
   }
 }
 ```
+
+---
+
+## 7. ATAK / Cursor-on-Target (CoT) Mobile Tactical Mesh Guide
+
+### Civilian Smartphone Situational Awareness
+ATAK-CIV (Android Team Awareness Kit - Civil) is a free, open-source tactical geospatial mapping application available worldwide on Google Play and F-Droid. With `v1.10.0-sidecar`, the Gods-Eye-View Sidecar streams live contacts, radar domes, and emergency alerts directly into ATAK on any civilian smartphone or tablet.
+
+#### Quick Setup in ATAK-CIV (Android):
+1. **Connect to Same Wi-Fi:** Ensure your Android phone running ATAK-CIV is on the same local Wi-Fi network as the Gods-Eye-View Sidecar host.
+2. **Add Network Input (Default Port 4242):**
+   - In ATAK, tap the **Overflow Menu (3 dots)** → **Settings** → **Network Preferences** → **Manage Inputs**.
+   - Tap **Add** (`+`):
+     - **Name:** `Gods-Eye-View Sidecar`
+     - **Type:** `UDP`
+     - **Port:** `4242`
+     - **Protocol:** `CoT`
+   - Toggle input switch to **Active / Green**.
+3. **Target Direct IP (Optional Unicast):**
+   If local Wi-Fi router blocks subnet broadcast (`255.255.255.255`), add your Android phone's LAN IP (e.g. `192.168.1.150`) into `sidecar/config/watchlists.json` under `cot_broadcast.unicast_targets`, or invoke:
+   ```bash
+   curl -X POST http://localhost:8000/api/cot/configure \
+     -H "Content-Type: application/json" \
+     -d '{"unicast_targets": ["127.0.0.1", "host.docker.internal", "192.168.1.150"]}'
+   ```
+4. **Instant Verification:**
+   Send a test pin from terminal:
+   ```bash
+   curl -X POST http://localhost:8000/api/cot/broadcast_test \
+     -H "Content-Type: application/json" \
+     -d '{"callsign": "MY_BASE", "lat": 12.9716, "lon": 77.5946, "remarks": "Personal TOC"}'
+   ```
+   The pin immediately drops onto your phone's ATAK offline topographical or satellite map with radial menu metadata.
+

@@ -293,14 +293,20 @@ Retrieves all contacts received exclusively via sovereign local edge RF transpon
 curl -X GET http://localhost:8000/api/sdr/contacts
 ```
 
-### 26. Upstream Federated Core Tools (30 Tools)
+### 26. Cursor-on-Target (CoT) & ATAK Tactical Data Link (Tools 26-30)
+- **`get_cot_status`**: Real-time packet throughput, target UDP endpoints, and entity transmission counters.
+- **`configure_cot_broadcaster`**: Update broadcast port (`4242`), subnet targets, unicast device IPs, and refresh intervals.
+- **`start_cot_stream` & `stop_cot_stream`**: Manage the background CoT streaming daemon.
+- **`broadcast_cot_test_marker`**: Inject instant tactical markers/pins onto Android ATAK-CIV screens.
+
+### 27. Upstream Federated Core Tools (30 Tools)
 `mcp-gateway` automatically discovers and proxies all 30 upstream God's Eye View MCP tools directly:
 - **`situation_brief`**: Unified operational picture (weather, quakes, fires, aircraft, ships, cyclones).
 - **`military_awareness`**: 250km radar perimeter of military aircraft, surface warships, and defense installations.
 - **`show_in_gods_eye_view`**: Live 3D Cesium camera and layer positioning with direct browser links.
 - **`get_earthquakes`**, **`get_weather`**, **`get_weather_radar`**, **`get_flights`**, **`get_ships`**, **`get_satellites`**, **`get_wildfires`**, **`get_air_quality`**, **`get_cctv`**, and more.
 
-All 55 tools can be invoked via standard HTTP `POST /api/tools/{tool_name}` or directly through Claude Desktop / Cursor / Windsurf via MCP.
+All **60 tools** (30 Native Sidecar + 30 Upstream Federated) can be invoked via standard HTTP `POST /api/tools/{tool_name}` or directly through Claude Desktop / Cursor / Windsurf via MCP.
 
 ---
 
@@ -326,7 +332,7 @@ Connect Claude Desktop to God's Eye View with a single unified entry point in `~
 }
 ```
 
-Once connected, Claude Desktop will automatically see all **35+ tools** (5 Sidecar Native tools + 30 Upstream Core tools), enabling autonomous intelligence retrieval, real-time spatial analytics, and live 3D Cesium cockpit control in the browser!
+Once connected, Claude Desktop will automatically see all **60 tools** (30 Sidecar Native tools + 30 Upstream Core tools), enabling autonomous intelligence retrieval, real-time spatial analytics, live 3D Cesium cockpit control, and ATAK mobile field coordination!
 
 ---
 

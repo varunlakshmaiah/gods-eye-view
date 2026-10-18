@@ -13,8 +13,12 @@ services:
     networks:
       sidecar_net:
         ipv4_address: 172.28.0.11
+    ports:
+      - "127.0.0.1:4173:4173"
+      - "127.0.0.1:8000:8000"
     expose:
       - "4173"
+      - "8000"
     restart: unless-stopped
 
   tile38:
@@ -70,18 +74,16 @@ services:
     build:
       context: ./sidecar/mcp-gateway
       dockerfile: Dockerfile
-    ports:
-      - "127.0.0.1:8000:8000"
+    network_mode: "service:upstream"
     environment:
       - TILE38_HOST=tile38
       - TILE38_PORT=9851
       - DATABASE_URL=postgresql://postgres:postgres@timescaledb:5432/gods_eye_sidecar
-      - UPSTREAM_URL=http://upstream:4173
+      - UPSTREAM_URL=http://127.0.0.1:4173
       - MCP_GATEWAY_PORT=8000
       - MCP_GATEWAY_HOST=0.0.0.0
-    networks:
-      - sidecar_net
     depends_on:
+      - upstream
       - tile38
       - timescaledb
     restart: unless-stopped

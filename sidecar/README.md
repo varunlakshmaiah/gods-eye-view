@@ -132,9 +132,44 @@ curl -X POST http://localhost:8000/api/tools/control_visual_cockpit \
   }'
 ```
 
+### 6. Upstream Federated Core Tools (30 Tools)
+`mcp-gateway` automatically discovers and proxies all 30 upstream God's Eye View MCP tools directly:
+- **`situation_brief`**: Unified operational picture (weather, quakes, fires, aircraft, ships, cyclones).
+- **`military_awareness`**: 250km radar perimeter of military aircraft, surface warships, and defense installations.
+- **`show_in_gods_eye_view`**: Live 3D Cesium camera and layer positioning with direct browser links.
+- **`get_earthquakes`**, **`get_weather`**, **`get_weather_radar`**, **`get_flights`**, **`get_ships`**, **`get_satellites`**, **`get_wildfires`**, **`get_air_quality`**, **`get_cctv`**, and more.
+
+All tools can be invoked via standard HTTP `POST /api/tools/{tool_name}` or directly through Claude Desktop / Cursor / Windsurf via MCP.
+
 ---
 
-## 5. Headless Operation
+## 5. Claude Desktop & MCP Integration
+
+Connect Claude Desktop to God's Eye View with a single unified entry point in `~/Library/Application Support/Claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "gods-eye-view": {
+      "command": "/usr/local/bin/docker",
+      "args": [
+        "exec",
+        "-i",
+        "gods-eye-view-mcp-gateway-1",
+        "python3",
+        "-m",
+        "src.mcp_stdio"
+      ]
+    }
+  }
+}
+```
+
+Once connected, Claude Desktop will automatically see all **35+ tools** (5 Sidecar Native tools + 30 Upstream Core tools), enabling autonomous intelligence retrieval, real-time spatial analytics, and live 3D Cesium cockpit control in the browser!
+
+---
+
+## 6. Headless Operation
 
 When no browser sessions are open, `proxy-tee` automatically enters **Headless Mode** after 60 seconds of inactivity. An internal keep-alive cron periodically polls upstream feeds at safe intervals (Flights: 15s, Vessels: 30s, FIRMS: 30m, CelesTrak: 6h) respecting upstream rate-limit governors.
 
@@ -142,7 +177,7 @@ This ensures Tile38 and TimescaleDB maintain a continuous, 24/7 spatio-temporal 
 
 ---
 
-## 6. Upstream Invariants & Compatibility Architecture
+## 7. Upstream Invariants & Compatibility Architecture
 
 To guarantee **100% upstream project originality** without a single modification to upstream files (`src/`, `server/`, etc.), the sidecar explicitly accounts for several internal security and architectural gates found in `bilawalsidhu/gods-eye-view`:
 
@@ -160,8 +195,8 @@ To guarantee **100% upstream project originality** without a single modification
 
 ### 3. Loopback-Pinned Upstream MCP Server
 - **Upstream Files:** `server/mcp/plugin.js` (`/mcp`)
-- **Behavior:** Upstream runs an embedded MCP server that checks `LOOPBACK_ADDRESSES` and verifies `hostUrl.port === localPort`. It does not read `GEV_KEY_SETUP_TRUSTED_PEERS`.
-- **Sidecar Compatibility:** The sidecar deploys its own high-performance, standalone `mcp-gateway` (FastAPI + FastMCP + SGP4) on port `8000`, completely decoupling AI tool execution from upstream's internal Vite plugin.
+- **Behavior:** Upstream runs an embedded MCP server that checks `LOOPBACK_ADDRESSES` (`127.0.0.1, ::1`). It blocks any external container IP with `403 The MCP server only accepts local requests`.
+- **Sidecar Compatibility:** `mcp-gateway` runs with `network_mode: "service:upstream"`, sharing `upstream`'s network namespace and loopback adapter. This allows `mcp-gateway` to communicate directly with `http://127.0.0.1:4173/mcp` without modifying upstream code, transparently federating all 30 upstream tools alongside the 5 native sidecar tools.
 
 ### 4. Per-Socket Rate Limiting
 - **Upstream Files:** `server/providers/common/rate-limit.js`

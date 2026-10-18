@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -20,6 +20,7 @@ from .tools.scene_roster import build_contact_roster
 from .tools.entity_track import lookup_entity_anchor, get_trajectory
 from .tools.environment import get_environmental_digest
 from .tools.ui_control import execute_cockpit_control
+from .upstream_tools import poll_and_federate, federate_upstream_tools
 
 # ----------------------------------------------------------------------------
 # Lifespan Lifecycle
@@ -28,6 +29,8 @@ from .tools.ui_control import execute_cockpit_control
 async def lifespan(app: FastAPI):
     print("[McpGateway] Initializing router connections...")
     await router.initialize()
+    upstream_url = os.getenv("UPSTREAM_URL", "http://127.0.0.1:4173")
+    asyncio.create_task(poll_and_federate(mcp_server, f"{upstream_url}/mcp"))
     yield
     print("[McpGateway] Closing router connections...")
     await router.close()
@@ -274,6 +277,30 @@ async def api_predict_satellite_passes(req: SatellitePassesRequest):
 @app.post("/api/tools/control_visual_cockpit")
 async def api_control_visual_cockpit(req: CockpitControlRequest):
     return await tool_control_visual_cockpit(req.action, req.params)
+
+@app.get("/api/mcp/tools")
+async def api_list_all_tools():
+    """List all registered tools (both native and federated) with their schemas."""
+    tools = []
+    for name, tool_obj in mcp_server._tool_manager._tools.items():
+        tools.append({
+            "name": name,
+            "description": tool_obj.description or "",
+            "parameters": getattr(tool_obj, "parameters", {"type": "object", "properties": {}}),
+        })
+    return {"tools": tools}
+
+@app.post("/api/tools/{tool_name}")
+async def api_execute_tool(tool_name: str, payload: Dict[str, Any] = Body(default={})):
+    """Generic tool invocation endpoint for both native and federated tools."""
+    if tool_name not in mcp_server._tool_manager._tools:
+        raise HTTPException(status_code=404, detail=f"Tool '{tool_name}' not found")
+    tool_obj = mcp_server._tool_manager._tools[tool_name]
+    try:
+        res = await tool_obj.fn(**payload)
+        return {"result": res}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ----------------------------------------------------------------------------
 # WebSocket Hub Endpoint for Browser Co-Pilot Bridge

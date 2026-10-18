@@ -181,3 +181,152 @@ This document outlines the **6 Core Verification Test Suites** used to validate 
   Outputs:
   * `Init status: gods-eye-view`
   * `resolve_anchor success: True`
+
+---
+
+## Test Suite 7: Tactical Tripwires & Multi-Channel Alert Dispatch
+
+### Test 7.1: Verify Tactical Alert Injection Across All Dispatch Channels
+* **Objective:** Confirm manual alert dispatches to Browser HUD, macOS Desktop, Database, ATAK CoT, and Meshtastic LoRa.
+* **Execution:**
+  ```bash
+  curl -s -X POST http://127.0.0.1:8000/api/alerts/test \
+    -H "Content-Type: application/json" \
+    -d '{
+      "title": "Manual Incursion Test",
+      "severity": "CRITICAL",
+      "message": "Unidentified target entering Bangalore AOI perimeter",
+      "aoi_name": "Bangalore",
+      "lat": 12.9716,
+      "lon": 77.5946
+    }' | jq .
+  ```
+* **Success Criteria:** Returns `dispatch_results` with `'browser_hud': true`, `'db_logged': true`, `'atak_cot': true`, `'meshtastic_lora': true`.
+
+### Test 7.2: Verify Recent Alerts Retrieval
+* **Objective:** Retrieve stored alerts from PostgreSQL / in-memory buffer.
+* **Execution:**
+  ```bash
+  curl -s http://127.0.0.1:8000/api/alerts/recent | jq .
+  ```
+* **Success Criteria:** Returns list of recent alerts including timestamps and severity codes.
+
+---
+
+## Test Suite 8: AI Watchstander & Pattern-of-Life (PoL) Analytics
+
+### Test 8.1: Verify 12-Hour Automated INTSUM Dossier Generation
+* **Objective:** Generate a comprehensive tactical intelligence briefing for Bangalore AOI.
+* **Execution:**
+  ```bash
+  curl -s "http://127.0.0.1:8000/api/intsum/generate?aoi=Bangalore&hours=12" | jq .
+  ```
+* **Success Criteria:** Returns structured JSON with `executive_summary`, `threat_level`, `stats` (air/sea/disaster totals), and `key_events`.
+
+### Test 8.2: Verify Non-Cooperative Dark Contact Detection
+* **Objective:** Scan for targets whose transponders ceased broadcasting while airborne or underway.
+* **Execution:**
+  ```bash
+  curl -s "http://127.0.0.1:8000/api/pol/dark_contacts?aoi=Bangalore&silence_min=15" | jq .
+  ```
+* **Success Criteria:** Returns classified dark contact candidates or empty list if no dropouts exist.
+
+### Test 8.3: Verify Kinematic Flight Maneuver Anomalies
+* **Objective:** Scan for rapid uncoordinated descents (> 3,500 fpm) and erratic course changes.
+* **Execution:**
+  ```bash
+  curl -s "http://127.0.0.1:8000/api/pol/maneuvers?aoi=Bangalore&max_fpm=3500" | jq .
+  ```
+* **Success Criteria:** Returns detected kinematic anomalies.
+
+---
+
+## Test Suite 9: Kinematic CPA/TCPA & 3D Radar Horizons
+
+### Test 9.1: Verify 4D Pairwise Closest Point of Approach (CPA) Solver
+* **Objective:** Compute separation vector and time-to-closest-point-of-approach between two entities.
+* **Execution:**
+  ```bash
+  # Pick two active hex IDs from: curl -s http://127.0.0.1:8000/api/tools/get_scene_context -H "Content-Type: application/json" -d '{"lat":12.9716,"lon":77.5946,"radius_km":100}'
+  curl -s -X POST http://127.0.0.1:8000/api/kinematics/conflicts \
+    -H "Content-Type: application/json" \
+    -d '{"lat": 12.9716, "lon": 77.5946, "radius_km": 100, "min_cpa_km": 10.0, "max_tcpa_min": 20.0}' | jq .
+  ```
+* **Success Criteria:** Returns list of conflict pairs with `cpa_distance_km`, `tcpa_seconds`, and `closure_rate_kts`.
+
+### Test 9.2: Verify Radar Horizon & Line-of-Sight Calculation
+* **Objective:** Evaluate atmospheric refraction line-of-sight radar shadow.
+* **Execution:**
+  ```bash
+  curl -s -X POST http://127.0.0.1:8000/api/radar/coverage \
+    -H "Content-Type: application/json" \
+    -d '{"lat": 13.5, "lon": 77.8, "altitude_m": 1200.0, "station_id": "VOBL_ASR"}' | jq .
+  ```
+* **Success Criteria:** Returns `is_visible`, `radar_horizon_km`, `slant_range_km`, `elevation_deg`, and `in_cone_of_silence`.
+
+---
+
+## Test Suite 10: Sovereign Edge RTL-SDR Radio Feeder
+
+### Test 10.1: Verify Edge Radio Receiver Status & Contacts
+* **Objective:** Query sovereign edge radio receiver metrics and active local RF contacts.
+* **Execution:**
+  ```bash
+  curl -s http://127.0.0.1:8000/api/sdr/status | jq .
+  curl -s http://127.0.0.1:8000/api/sdr/contacts | jq .
+  ```
+* **Success Criteria:** Returns `status`, `frequency_mhz` (1090.0 or 162.0), message rates, and contact list.
+
+---
+
+## Test Suite 11: ATAK / Cursor-on-Target (CoT 2.0 UDP Port 4242)
+
+### Test 11.1: Verify CoT Broadcaster Metrics
+* **Objective:** Confirm continuous UDP streaming on port 4242.
+* **Execution:**
+  ```bash
+  curl -s http://127.0.0.1:8000/api/cot/status | jq .
+  ```
+* **Success Criteria:** `status: "streaming"`, `target_port: 4242`, `total_packets_sent > 0`.
+
+### Test 11.2: Broadcast Instant CoT Marker to Mobile ATAK
+* **Objective:** Inject a high-priority marker to test mobile device rendering.
+* **Execution:**
+  ```bash
+  curl -s -X POST http://127.0.0.1:8000/api/cot/broadcast_test \
+    -H "Content-Type: application/json" \
+    -d '{"callsign": "MY_BASE", "lat": 12.9716, "lon": 77.5946, "remarks": "Personal TOC Ground Station"}' | jq .
+  ```
+* **Success Criteria:** Returns `status: "broadcast_sent"` and valid XML starting with `<event version="2.0" uid="TEST_MY_BASE" ...>`.
+
+---
+
+## Test Suite 12: Meshtastic / LoRa Off-Grid Tactical Mesh Relay
+
+### Test 12.1: Verify LoRa Mesh Relay Status & Discovered Nodes
+* **Objective:** Confirm active node tracking across the decentralized LoRa radio mesh.
+* **Execution:**
+  ```bash
+  curl -s http://127.0.0.1:8000/api/meshtastic/status | jq .
+  curl -s http://127.0.0.1:8000/api/meshtastic/nodes | jq .
+  ```
+* **Success Criteria:** `status: "active"`, `region: "IN_865"`, `total_nodes_discovered: 3`, with GPS coordinates, battery percentages, and SNR values.
+
+### Test 12.2: Transmit Alphanumeric Text Message Over Mesh
+* **Objective:** Broadcast message to field nodes without internet or cellular connectivity.
+* **Execution:**
+  ```bash
+  curl -s -X POST http://127.0.0.1:8000/api/meshtastic/send \
+    -H "Content-Type: application/json" \
+    -d '{"text": "TOC to ROVER-2: Recon perimeter checkpoint Bravo.", "to_node": "^all"}' | jq .
+  ```
+* **Success Criteria:** Returns `status: "broadcasted"` with packet ID and timestamp.
+
+### Test 12.3: Verify Total MCP Tool Inventory (Must Equal 65)
+* **Objective:** Verify all 65 tools (35 Native Sidecar + 30 Upstream Federated) are active and discoverable.
+* **Execution:**
+  ```bash
+  curl -s http://127.0.0.1:8000/api/mcp/tools | jq '.tools | length'
+  ```
+* **Success Criteria:** Outputs exactly `65`.
+

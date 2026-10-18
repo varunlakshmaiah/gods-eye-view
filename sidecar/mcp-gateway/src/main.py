@@ -762,6 +762,29 @@ async def api_ping_escort_location(req: EscortPingRequest):
     await hub.broadcast_json({"type": "escort_sync", "devices": escort_engine.list_devices()})
     return res
 
+@app.post("/api/escort/owntracks")
+async def api_owntracks_webhook(payload: Dict[str, Any]):
+    if payload.get("_type") != "location":
+        return []
+    device_id = f"VIP-{payload.get('tid', 'ANDROID')}".upper()
+    lat = float(payload.get("lat", 0.0))
+    lon = float(payload.get("lon", 0.0))
+    alt_m = float(payload.get("alt", 0.0))
+    speed_kts = float(payload.get("vel", 0.0)) * 0.539957
+    heading_deg = float(payload.get("cog", 0.0))
+    
+    res = escort_engine.update_location(
+        device_id=device_id,
+        lat=lat,
+        lon=lon,
+        alt_m=alt_m,
+        speed_kts=speed_kts,
+        heading_deg=heading_deg,
+        source="owntracks",
+    )
+    await hub.broadcast_json({"type": "escort_sync", "devices": escort_engine.list_devices()})
+    return [{"status": 200}]
+
 @app.post("/api/escort/query")
 async def api_query_relative_to_escort(req: EscortQueryRequest):
     return await escort_engine.query_relative(

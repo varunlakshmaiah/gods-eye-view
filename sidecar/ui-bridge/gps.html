@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0">
+  <title>God's Eye View - Mobile GPS Beacon</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #080d16;
+      color: #e0f0ff;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+      padding: 16px;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid rgba(0, 255, 204, 0.25);
+      padding-bottom: 12px;
+      margin-bottom: 16px;
+    }
+    .title {
+      font-size: 16px;
+      font-weight: 800;
+      color: #00ffcc;
+      letter-spacing: 1px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .badge {
+      font-size: 10px;
+      font-weight: bold;
+      padding: 3px 8px;
+      border-radius: 4px;
+      letter-spacing: 0.5px;
+      background: rgba(255, 255, 255, 0.1);
+      color: #8899aa;
+    }
+    .badge.active {
+      background: rgba(0, 255, 136, 0.2);
+      color: #00ff88;
+      border: 1px solid #00ff88;
+      animation: pulse 1.8s infinite;
+    }
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(0, 255, 136, 0.6); }
+      70% { box-shadow: 0 0 0 10px rgba(0, 255, 136, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(0, 255, 136, 0); }
+    }
+    .card {
+      background: rgba(14, 24, 40, 0.85);
+      border: 1px solid rgba(0, 255, 204, 0.2);
+      border-radius: 8px;
+      padding: 14px;
+      margin-bottom: 14px;
+    }
+    .form-group {
+      margin-bottom: 12px;
+    }
+    .form-label {
+      display: block;
+      font-size: 11px;
+      font-weight: bold;
+      color: #778899;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 4px;
+    }
+    input, select {
+      width: 100%;
+      background: rgba(4, 9, 18, 0.9);
+      border: 1px solid rgba(0, 255, 204, 0.35);
+      color: #ffffff;
+      padding: 10px 12px;
+      border-radius: 6px;
+      font-size: 14px;
+      font-family: monospace;
+      outline: none;
+    }
+    input:focus, select:focus {
+      border-color: #00ffcc;
+      box-shadow: 0 0 8px rgba(0, 255, 204, 0.3);
+    }
+    .row {
+      display: flex;
+      gap: 10px;
+    }
+    .row > div {
+      flex: 1;
+    }
+    .btn {
+      width: 100%;
+      padding: 14px;
+      border: none;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: bold;
+      letter-spacing: 1px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: all 0.2s ease;
+    }
+    .btn-start {
+      background: #00ff88;
+      color: #041014;
+      box-shadow: 0 4px 20px rgba(0, 255, 136, 0.35);
+    }
+    .btn-stop {
+      background: #ff3366;
+      color: #ffffff;
+      box-shadow: 0 4px 20px rgba(255, 51, 102, 0.35);
+    }
+    .telemetry-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 10px;
+    }
+    .telemetry-item {
+      background: rgba(5, 12, 24, 0.95);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 6px;
+      padding: 10px;
+    }
+    .telemetry-val {
+      font-size: 15px;
+      font-weight: bold;
+      color: #00ffcc;
+      font-family: monospace;
+      margin-top: 2px;
+      word-break: break-all;
+    }
+    .status-log {
+      font-family: monospace;
+      font-size: 11px;
+      color: #88aacc;
+      max-height: 120px;
+      overflow-y: auto;
+      background: rgba(0, 0, 0, 0.5);
+      padding: 8px;
+      border-radius: 4px;
+      margin-top: 8px;
+      white-space: pre-wrap;
+    }
+    .footer {
+      margin-top: auto;
+      text-align: center;
+      font-size: 10px;
+      color: #556677;
+      padding: 12px 0 4px;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="title">
+      <span>🛡️</span> GOD'S EYE VIEW
+    </div>
+    <div id="status-badge" class="badge">OFFLINE</div>
+  </div>
+
+  <div class="card" id="config-card">
+    <div class="form-group">
+      <label class="form-label">Asset Callsign / VIP Name</label>
+      <input type="text" id="asset-name" value="VIP Android Phone" placeholder="e.g. VIP Android Phone">
+    </div>
+
+    <div class="row">
+      <div class="form-group">
+        <label class="form-label">Device ID</label>
+        <input type="text" id="device-id" value="VIP-ANDROID-1" placeholder="VIP-ANDROID-1">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Asset Type</label>
+        <select id="asset-type">
+          <option value="person" selected>👤 VIP Phone</option>
+          <option value="vehicle">🚙 Convoy / Vehicle</option>
+          <option value="boat">🚤 Vessel / Boat</option>
+          <option value="aircraft">✈️ Aircraft</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Guardian Bubble Radius (km)</label>
+      <input type="number" id="bubble-radius" value="15" min="1" max="100">
+    </div>
+
+    <button id="toggle-btn" class="btn btn-start">
+      <span>📡</span> START TRANSMITTING GPS
+    </button>
+  </div>
+
+  <div class="card" id="telemetry-card" style="display: none;">
+    <div style="font-size: 11px; font-weight: bold; color: #00ffcc; letter-spacing: 0.5px; margin-bottom: 6px; display: flex; justify-content: space-between;">
+      <span>LIVE GPS TELEMETRY</span>
+      <span id="ping-counter" style="color: #00ff88;">0 PINGS</span>
+    </div>
+
+    <div class="telemetry-grid">
+      <div class="telemetry-item" style="grid-column: span 2;">
+        <div class="form-label">Coordinates</div>
+        <div class="telemetry-val" id="val-coords">-- , --</div>
+      </div>
+      <div class="telemetry-item">
+        <div class="form-label">Accuracy</div>
+        <div class="telemetry-val" id="val-acc">-- m</div>
+      </div>
+      <div class="telemetry-item">
+        <div class="form-label">Speed</div>
+        <div class="telemetry-val" id="val-speed">-- kts</div>
+      </div>
+      <div class="telemetry-item">
+        <div class="form-label">Heading</div>
+        <div class="telemetry-val" id="val-heading">--°</div>
+      </div>
+      <div class="telemetry-item">
+        <div class="form-label">Altitude</div>
+        <div class="telemetry-val" id="val-alt">-- m</div>
+      </div>
+    </div>
+
+    <div class="status-log" id="log-box">Waiting to start GPS acquisition...</div>
+  </div>
+
+  <div class="footer">
+    Sentinel Escort Engine • Direct Phone GPS Transponder
+  </div>
+
+  <script>
+    let watchId = null;
+    let wakeLock = null;
+    let isTransmitting = false;
+    let pingsSent = 0;
+    let lastPingTime = 0;
+    const PING_INTERVAL_MS = 1200;
+
+    const toggleBtn = document.getElementById('toggle-btn');
+    const badge = document.getElementById('status-badge');
+    const telCard = document.getElementById('telemetry-card');
+    const logBox = document.getElementById('log-box');
+    const pingCounter = document.getElementById('ping-counter');
+
+    function log(msg) {
+      const time = new Date().toLocaleTimeString();
+      logBox.textContent = `[${time}] ${msg}\n` + logBox.textContent.slice(0, 1000);
+    }
+
+    async function requestWakeLock() {
+      try {
+        if ('wakeLock' in navigator) {
+          wakeLock = await navigator.wakeLock.request('screen');
+        }
+      } catch (err) {}
+    }
+
+    async function registerAsset(deviceId, name, type, radius) {
+      try {
+        const payload = {
+          device_id: deviceId,
+          name: name,
+          device_type: type,
+          lat: 0,
+          lon: 0,
+          alt_m: 0,
+          bubble_radius_km: Number(radius) || 15.0,
+          source: 'android_beacon'
+        };
+        await fetch('/api/escort/tag', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        log(`Guardian bubble registered (${radius}km perimeter)`);
+      } catch (e) {
+        log(`Notice: initial registration via ping`);
+      }
+    }
+
+    async function transmitPing(pos) {
+      const now = Date.now();
+      if (now - lastPingTime < PING_INTERVAL_MS) return;
+      lastPingTime = now;
+
+      const deviceId = document.getElementById('device-id').value.trim() || 'VIP-ANDROID-1';
+      const lat = pos.coords.latitude;
+      const lon = pos.coords.longitude;
+      const acc = pos.coords.accuracy || 0;
+      const alt = pos.coords.altitude || 0;
+      const speedMps = pos.coords.speed || 0;
+      const speedKts = speedMps * 1.94384;
+      const heading = pos.coords.heading || 0;
+
+      // Update UI readouts
+      document.getElementById('val-coords').textContent = `${lat.toFixed(6)}, ${lon.toFixed(6)}`;
+      const accElem = document.getElementById('val-acc');
+      accElem.textContent = `± ${acc.toFixed(1)} m`;
+      accElem.style.color = acc <= 10 ? '#00ff88' : (acc <= 30 ? '#ffaa00' : '#ff3366');
+      document.getElementById('val-speed').textContent = `${speedKts.toFixed(1)} kts (${(speedMps * 3.6).toFixed(1)} km/h)`;
+      document.getElementById('val-heading').textContent = heading ? `${Math.round(heading)}°` : '--°';
+      document.getElementById('val-alt').textContent = `${Math.round(alt)} m`;
+
+      try {
+        const payload = {
+          device_id: deviceId,
+          lat: lat,
+          lon: lon,
+          alt_m: alt,
+          speed_kts: speedKts,
+          heading_deg: heading,
+          source: 'android_mobile_beacon'
+        };
+
+        const res = await fetch('/api/escort/ping', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        if (res.ok) {
+          pingsSent++;
+          pingCounter.textContent = `${pingsSent} PINGS SENT`;
+          log(`GPS ping #${pingsSent} sent (${lat.toFixed(5)}, ${lon.toFixed(5)}) acc: ±${Math.round(acc)}m`);
+        } else {
+          log(`Ping failed: HTTP ${res.status}`);
+        }
+      } catch (err) {
+        log(`Network error sending ping: ${err.message}`);
+      }
+    }
+
+    async function startTransmitting() {
+      if (!('geolocation' in navigator)) {
+        alert('Geolocation is not supported by your browser.');
+        return;
+      }
+
+      const deviceId = document.getElementById('device-id').value.trim() || 'VIP-ANDROID-1';
+      const name = document.getElementById('asset-name').value.trim() || 'VIP Android Phone';
+      const type = document.getElementById('asset-type').value;
+      const radius = document.getElementById('bubble-radius').value || 15;
+
+      isTransmitting = true;
+      toggleBtn.className = 'btn btn-stop';
+      toggleBtn.innerHTML = '<span>⏹️</span> STOP TRANSMITTING';
+      badge.className = 'badge active';
+      badge.textContent = 'TRANSMITTING';
+      telCard.style.display = 'block';
+
+      log('Requesting high-accuracy GPS fix...');
+      await requestWakeLock();
+      await registerAsset(deviceId, name, type, radius);
+
+      watchId = navigator.geolocation.watchPosition(
+        (pos) => {
+          transmitPing(pos);
+        },
+        (err) => {
+          log(`GPS Error: ${err.message} (Code ${err.code})`);
+        },
+        {
+          enableHighAccuracy: true,
+          maximumAge: 1000,
+          timeout: 10000
+        }
+      );
+    }
+
+    function stopTransmitting() {
+      if (watchId !== null) {
+        navigator.geolocation.clearWatch(watchId);
+        watchId = null;
+      }
+      if (wakeLock) {
+        wakeLock.release().catch(() => {});
+        wakeLock = null;
+      }
+      isTransmitting = false;
+      toggleBtn.className = 'btn btn-start';
+      toggleBtn.innerHTML = '<span>📡</span> START TRANSMITTING GPS';
+      badge.className = 'badge';
+      badge.textContent = 'OFFLINE';
+      log('GPS transmission stopped by user');
+    }
+
+    toggleBtn.onclick = () => {
+      if (!isTransmitting) {
+        startTransmitting();
+      } else {
+        stopTransmitting();
+      }
+    };
+  </script>
+</body>
+</html>

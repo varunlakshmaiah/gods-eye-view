@@ -94,6 +94,29 @@ app.get('/__sidecar/copilot-bridge.js', (_req: Request, res: Response) => {
   res.send(`console.log('[Sidecar UI Bridge] Loaded via inline fallback');`);
 });
 
+// Serve the Mobile GPS Transmitter web app
+app.get(['/gps', '/mobile-gps'], (_req: Request, res: Response) => {
+  const possiblePaths = [
+    '/app/ui-bridge/gps.html',
+    path.resolve(process.cwd(), 'ui-bridge/gps.html'),
+    path.resolve(__dirname, '../../ui-bridge/gps.html'),
+    path.resolve(__dirname, '../ui-bridge/gps.html'),
+    path.resolve(process.cwd(), 'sidecar/ui-bridge/gps.html'),
+    path.resolve(process.cwd(), '../ui-bridge/gps.html'),
+  ];
+
+  for (const p of possiblePaths) {
+    if (fs.existsSync(p)) {
+      res.setHeader('Content-Type', 'text/html');
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+      res.sendFile(p);
+      return;
+    }
+  }
+
+  res.status(404).send('GPS transmitter page not found');
+});
+
 // ----------------------------------------------------------------------------
 // 2. Playback Interceptor Middleware
 // ----------------------------------------------------------------------------

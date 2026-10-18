@@ -513,11 +513,13 @@
           break;
         }
 
+        case 'tag_escort_asset':
         case 'tag_traffic_vehicle': {
-          const vehicleId = params.vehicle_id;
+          const deviceId = params.device_id || params.vehicle_id;
           const radiusKm = Number(params.bubble_radius_km || 15.0);
-          const name = params.name || `Traffic ${vehicleId}`;
-          result = await tagTrafficVehicle(vehicleId, radiusKm, name);
+          const name = params.name || `Escort ${deviceId}`;
+          const type = params.device_type || 'person';
+          result = await tagEscortAsset(deviceId, name, type, radiusKm);
           break;
         }
 
@@ -933,19 +935,13 @@
   }
 
   let cachedEscortDevices = [];
-  const trackedTrafficVehicles = new Map();
   let activeFollowVehicleId = null;
   let lastFollowCartesian = null;
   let isCameraFlying = false;
 
   function normalizeVehicleId(rawId) {
     if (!rawId) return '';
-    const trimmed = String(rawId).trim().replace(/\s+/g, '');
-    const m = trimmed.match(/^(?:VEH-?)?(\d+)$/i);
-    if (m) {
-      return `VEH-${m[1].padStart(4, '0')}`;
-    }
-    return trimmed;
+    return String(rawId).trim();
   }
 
   function getNumericVehicleId(rawId) {
@@ -957,14 +953,12 @@
   function findEscortDevice(rawId) {
     if (!rawId) return null;
     const raw = String(rawId).trim();
-    const norm = normalizeVehicleId(raw);
-    const num = getNumericVehicleId(raw);
+    const rawLower = raw.toLowerCase();
     return cachedEscortDevices.find(d => {
       if (!d) return false;
-      if (d.device_id === raw || d.device_id === norm) return true;
-      if (normalizeVehicleId(d.device_id) === norm) return true;
-      if (num !== null && getNumericVehicleId(d.device_id) === num) return true;
-      return false;
+      const dId = String(d.device_id || '').trim();
+      const dName = String(d.name || '').trim();
+      return dId === raw || dId.toLowerCase() === rawLower || dName.toLowerCase() === rawLower;
     }) || null;
   }
 
@@ -1009,81 +1003,9 @@
     }
   }
 
-  function findTrafficDot(targetId) {
-    if (!targetId) return null;
-    const { gev } = getCesiumGlobals();
-    const trafficLayer = gev?.dataManager?.layers?.get ? gev.dataManager.layers.get('traffic') : gev?.dataManager?.layers?.traffic;
-    const module = trafficLayer?.module || trafficLayer;
-    if (!module) return null;
-
-    const numTarget = getNumericVehicleId(targetId);
-    const normTarget = normalizeVehicleId(targetId).toUpperCase();
-    const strTarget = String(targetId).trim().toUpperCase();
-    let found = null;
-
-    if (typeof module.visitMotionDots === 'function') {
-      module.visitMotionDots((id, roadKey, point, road) => {
-        if (found) return;
-        const num = Number(id);
-        const strId = String(id).trim().toUpperCase();
-        const vehId = `VEH-${strId}`.toUpperCase();
-        const vehPadded = `VEH-${String(id).padStart(4, '0')}`.toUpperCase();
-
-        if (
-          (numTarget !== null && num === numTarget) ||
-          strId === strTarget ||
-          strId === normTarget ||
-          vehId === strTarget ||
-          vehId === normTarget ||
-          vehPadded === strTarget ||
-          vehPadded === normTarget
-        ) {
-          found = { id, roadKey, point, road };
-        }
-      });
-    }
-    return found;
-  }
-
   function getLiveVehicleCartesian(rawDeviceId) {
     if (!rawDeviceId) return null;
-    const { viewer, Cesium } = getCesiumGlobals();
-    const deviceId = normalizeVehicleId(rawDeviceId);
-    const numId = getNumericVehicleId(deviceId);
-    const tracked = trackedTrafficVehicles.get(deviceId) ||
-                    (numId ? trackedTrafficVehicles.get(numId) : null);
-
-    // 1. Direct fast-path: read cached dot reference (updated at 60 FPS by traffic layer)
-    if (tracked?.dotRef && tracked.dotRef.point?.position && !tracked.dotRef.recycle) {
-      const pos = tracked.dotRef.point.position;
-      if (Cesium?.Cartesian3?.clone) {
-        tracked.lastCartesian = Cesium.Cartesian3.clone(pos, tracked.lastCartesian || new Cesium.Cartesian3());
-      } else {
-        tracked.lastCartesian = pos;
-      }
-      return tracked.lastCartesian;
-    }
-
-    // 2. Search traffic layer for matching dot
-    const dot = findTrafficDot(deviceId) || findTrafficDot(rawDeviceId);
-    if (dot && dot.point?.position) {
-      if (tracked) {
-        tracked.dotRef = dot;
-        if (Cesium?.Cartesian3?.clone) {
-          tracked.lastCartesian = Cesium.Cartesian3.clone(dot.point.position, tracked.lastCartesian || new Cesium.Cartesian3());
-        } else {
-          tracked.lastCartesian = dot.point.position;
-        }
-      }
-      return dot.point.position;
-    }
-
-    // 3. Fallback to last known moving position
-    if (tracked?.lastCartesian) {
-      return tracked.lastCartesian;
-    }
-
-    // 4. Fallback to device coordinates
+    const { Cesium } = getCesiumGlobals();
     const dev = findEscortDevice(rawDeviceId);
     if (dev && dev.lat !== undefined && dev.lon !== undefined && Cesium?.Cartesian3) {
       return Cesium.Cartesian3.fromDegrees(Number(dev.lon), Number(dev.lat), Number(dev.altitude_m || 0));
@@ -1392,77 +1314,50 @@
 
   async function trackEscortVehicle(rawDeviceId) {
     if (!rawDeviceId) return;
-    const deviceId = normalizeVehicleId(rawDeviceId);
     const { viewer, Cesium, gev } = getCesiumGlobals();
     if (!viewer) return;
 
     // Ensure camera follower listener is attached to scene.preRender
     installCameraFollower(viewer, Cesium);
 
-    // 1. Ensure traffic layer is active so vehicles render and move
-    if (gev?.dataManager?.enableLayer) {
-      try { gev.dataManager.enableLayer('traffic'); } catch (e) {}
-    }
-
-    // 2. Clear any Cesium trackedEntity or transform lock so our 60 FPS follower has clean camera control
+    // 1. Clear any Cesium trackedEntity or transform lock so our 60 FPS follower has clean camera control
     viewer.trackedEntity = undefined;
     if (Cesium?.Matrix4?.IDENTITY) {
       try { viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY); } catch (e) {}
     }
 
-    // 3. Resolve target coordinates
-    let targetCoords = null;
-    const dot = findTrafficDot(deviceId) || findTrafficDot(rawDeviceId);
-    if (dot?.point?.position) {
-      targetCoords = cartesianToLatLon(dot.point.position);
-    }
-    if (!targetCoords) {
-      const dev = findEscortDevice(rawDeviceId);
-      if (dev && dev.lat !== undefined && dev.lon !== undefined) {
-        targetCoords = { lat: Number(dev.lat), lon: Number(dev.lon), alt: Number(dev.altitude_m || 0) };
-      }
-    }
-    if (!targetCoords) {
-      const tracked = trackedTrafficVehicles.get(deviceId) || trackedTrafficVehicles.get(rawDeviceId);
-      if (tracked && tracked.lastLat && tracked.lastLon) {
-        targetCoords = { lat: tracked.lastLat, lon: tracked.lastLon, alt: tracked.lastAlt || 0 };
-      }
-    }
-    if (!targetCoords) {
-      const sample = getActiveTrafficVehiclesSample(20);
-      const match = sample.find(s => s.id === deviceId || s.id === rawDeviceId || s.num === getNumericVehicleId(rawDeviceId));
-      if (match?.position) {
-        targetCoords = cartesianToLatLon(match.position);
-      }
-    }
-
-    if (!targetCoords) {
-      console.warn(`[GodsEyeSidecar] Cannot locate coordinates for vehicle: ${rawDeviceId}`);
+    // 2. Resolve target escort device
+    const dev = findEscortDevice(rawDeviceId);
+    if (!dev || dev.lat === undefined || dev.lon === undefined) {
+      console.warn(`[GodsEyeSidecar] Cannot locate coordinates for escort device: ${rawDeviceId}`);
       return;
     }
 
-    // 4. Set tracking active and mark camera flying
+    const deviceId = dev.device_id;
+
+    // 3. Set tracking active and mark camera flying
     activeFollowVehicleId = deviceId;
     isCameraFlying = true;
     lastFollowCartesian = null;
     updateTrackingHudState();
 
-    console.log(`[GodsEyeSidecar] Flying camera to tracked vehicle ${deviceId} at (${targetCoords.lat.toFixed(4)}, ${targetCoords.lon.toFixed(4)})...`);
+    const targetAlt = Math.max(1800, (dev.bubble_radius_km || 15) * 220);
+    console.log(`[GodsEyeSidecar] Flying camera to escort asset ${dev.name} (${deviceId}) at (${Number(dev.lat).toFixed(4)}, ${Number(dev.lon).toFixed(4)})...`);
 
-    // 5. Execute smooth camera flight: nadir top-down view (-89.9° pitch) at 2200m altitude
+    // 4. Execute smooth camera flight: nadir top-down view (-89.9° pitch)
     await handleCommand({
       action: 'fly_to_coordinate',
       params: {
-        lat: targetCoords.lat,
-        lon: targetCoords.lon,
-        altitude_m: 2200,
+        lat: Number(dev.lat),
+        lon: Number(dev.lon),
+        altitude_m: targetAlt,
         pitch_deg: -89.9,
         heading_deg: 0,
         duration_s: 1.5,
       },
     });
 
-    // 6. Flight complete: initialize follower position for 60 FPS lockstep follow
+    // 5. Flight complete: initialize follower position for 60 FPS lockstep follow
     isCameraFlying = false;
     const livePos = getLiveVehicleCartesian(deviceId);
     if (livePos) {
@@ -1473,117 +1368,62 @@
       }
     }
     updateTrackingHudState();
-    console.log(`%c[GodsEyeSidecar]%c Camera locked and tracking vehicle ${deviceId} in real-time at 60 FPS`, 'color: #00ff88; font-weight: bold;', 'color: inherit;');
+    console.log(`%c[GodsEyeSidecar]%c Camera locked and tracking escort ${dev.name} in real-time at 60 FPS`, 'color: #00ff88; font-weight: bold;', 'color: inherit;');
   }
 
-  async function tagTrafficVehicle(rawVehicleId, bubbleRadiusKm = 15.0, customName = null) {
-    const vehicleId = normalizeVehicleId(rawVehicleId);
-    const numId = getNumericVehicleId(vehicleId);
-    const name = customName || `Guardian ${vehicleId}`;
+  async function tagEscortAsset(rawDeviceId, customName = null, deviceType = 'person', bubbleRadiusKm = 15.0) {
+    const deviceId = normalizeVehicleId(rawDeviceId);
+    if (!deviceId) return { ok: false, error: 'Device ID required' };
+    const name = customName || `Escort ${deviceId}`;
     const radius = Number(bubbleRadiusKm) || 15.0;
 
-    // 1. Ensure Street Traffic layer is enabled in God's Eye View
-    const { gev, Cesium } = getCesiumGlobals();
-    if (gev?.dataManager?.enableLayer) {
-      try {
-        gev.dataManager.enableLayer('traffic');
-      } catch (e) {}
-    }
+    // Default to current camera view center if not yet pinged
+    const vp = getCameraViewport();
+    const initialCoords = (vp && vp.lat && vp.lon) ? { lat: vp.lat, lon: vp.lon, alt: 0 } : { lat: 12.9716, lon: 77.5946, alt: 0 };
 
-    // 2. Locate vehicle dot in current traffic layer
-    let initialCoords = null;
-    const dot = findTrafficDot(vehicleId) || findTrafficDot(rawVehicleId);
-    if (dot && dot.point?.position) {
-      initialCoords = cartesianToLatLon(dot.point.position);
-    }
-
-    // Fallback if dot not in current viewport
-    if (!initialCoords) {
-      const vp = getCameraViewport();
-      if (vp && vp.lat && vp.lon) {
-        initialCoords = { lat: vp.lat, lon: vp.lon, alt: 0 };
-      } else {
-        initialCoords = { lat: 12.9716, lon: 77.5946, alt: 0 };
-      }
-    }
-
-    // 3. Register in local tracking Map for the kinematic follower loop
-    const record = {
-      vehicleId,
-      numId,
-      name,
-      bubbleRadiusKm: radius,
-      lastLat: initialCoords.lat,
-      lastLon: initialCoords.lon,
-      lastAlt: initialCoords.alt || 0,
-      lastPingTime: 0,
-      lastCartesian: dot?.point?.position ? (Cesium?.Cartesian3?.clone(dot.point.position, new Cesium.Cartesian3()) || dot.point.position) : null,
-      dotRef: dot || null,
-    };
-    trackedTrafficVehicles.set(vehicleId, record);
-    if (numId) trackedTrafficVehicles.set(numId, record);
-
-    // 4. Register with Sentinel Escort Engine backend
+    // Register with Sentinel Escort Engine backend
     try {
       const host = window.location.hostname || 'localhost';
+      const payload = {
+        device_id: deviceId,
+        name,
+        device_type: deviceType,
+        lat: initialCoords.lat,
+        lon: initialCoords.lon,
+        alt_m: initialCoords.alt || 0,
+        bubble_radius_km: radius,
+        source: 'manual_asset_tag',
+      };
       let res = await fetch('/api/escort/tag', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          device_id: vehicleId,
-          name,
-          device_type: 'vehicle',
-          lat: initialCoords.lat,
-          lon: initialCoords.lon,
-          alt_m: initialCoords.alt || 0,
-          bubble_radius_km: radius,
-          source: 'tomtom_traffic',
-        }),
+        body: JSON.stringify(payload),
       }).catch(() => null);
 
       if (!res || !res.ok) {
         await fetch(`http://${host}:8000/api/escort/tag`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            device_id: vehicleId,
-            name,
-            device_type: 'vehicle',
-            lat: initialCoords.lat,
-            lon: initialCoords.lon,
-            alt_m: initialCoords.alt || 0,
-            bubble_radius_km: radius,
-            source: 'tomtom_traffic',
-          }),
+          body: JSON.stringify(payload),
         }).catch(() => {});
       }
     } catch (err) {
       console.warn('[GodsEyeSidecar] Error registering escort tag with backend:', err);
     }
 
-    // 5. Instantly refresh visual escort bubbles
+    // Refresh visuals & start following
     await syncEscortVisuals();
+    await trackEscortVehicle(deviceId);
 
-    // 6. Lock camera directly onto moving vehicle for real-time tracking (just like flight tracking!)
-    await trackEscortVehicle(vehicleId);
-
-    console.log(`%c[GodsEyeSidecar]%c Tagged traffic vehicle ${vehicleId} with ${radius}km Guardian Bubble at (${initialCoords.lat.toFixed(4)}, ${initialCoords.lon.toFixed(4)}).`, 'color: #00ff88; font-weight: bold;', 'color: inherit;');
-    return { ok: true, vehicle_id: vehicleId, name, radius_km: radius, initial_coords: initialCoords, tracking: true };
+    console.log(`%c[GodsEyeSidecar]%c Tagged escort asset ${name} (${deviceId}) with ${radius}km Guardian Bubble.`, 'color: #00ff88; font-weight: bold;', 'color: inherit;');
+    return { ok: true, device_id: deviceId, name, radius_km: radius, initial_coords: initialCoords, tracking: true };
   }
 
   async function untagEscortDevice(rawDeviceId) {
     const deviceId = normalizeVehicleId(rawDeviceId);
-    const numId = getNumericVehicleId(rawDeviceId);
-    trackedTrafficVehicles.delete(deviceId);
-    if (numId) trackedTrafficVehicles.delete(numId);
-    for (const [k, v] of trackedTrafficVehicles.entries()) {
-      if (v.vehicleId === deviceId || (numId && v.numId === numId)) {
-        trackedTrafficVehicles.delete(k);
-      }
-    }
 
     // Release camera tracking if this vehicle was active
-    if (activeFollowVehicleId === deviceId || activeFollowVehicleId === rawDeviceId || (numId && getNumericVehicleId(activeFollowVehicleId) === numId)) {
+    if (activeFollowVehicleId === deviceId || activeFollowVehicleId === rawDeviceId) {
       stopTrackingVehicle();
     }
 
@@ -1657,64 +1497,7 @@
     }
   }
 
-  // Smooth real-time update loop (250ms) for sliding bubble & throttled GPS telemetry pings
-  setInterval(() => {
-    if (trackedTrafficVehicles.size === 0) return;
-    const { viewer } = getCesiumGlobals();
-    if (!viewer) return;
 
-    const now = Date.now();
-    const processed = new Set();
-
-    for (const tracked of trackedTrafficVehicles.values()) {
-      if (processed.has(tracked.vehicleId)) continue;
-      processed.add(tracked.vehicleId);
-
-      const pos = getLiveVehicleCartesian(tracked.vehicleId);
-      if (!pos) continue;
-
-      const coords = cartesianToLatLon(pos);
-      if (!coords || !coords.lat || !coords.lon) continue;
-
-      const dLat = Math.abs(coords.lat - tracked.lastLat);
-      const dLon = Math.abs(coords.lon - tracked.lastLon);
-      const moved = dLat > 0.000005 || dLon > 0.000005;
-
-      tracked.lastLat = coords.lat;
-      tracked.lastLon = coords.lon;
-      tracked.lastAlt = coords.alt || 0;
-
-      // Update 15km perimeter circle positions smoothly
-      updateEscortEntityPosition(tracked.vehicleId, coords.lat, coords.lon, coords.alt || 0, tracked.bubbleRadiusKm);
-
-      // Throttled GPS ping for backend threat evaluation (every 2.5s)
-      if (now - tracked.lastPingTime > 2500 || (moved && now - tracked.lastPingTime > 1500)) {
-        tracked.lastPingTime = now;
-        try {
-          const host = window.location.hostname || 'localhost';
-          const payload = {
-            device_id: tracked.vehicleId,
-            lat: coords.lat,
-            lon: coords.lon,
-            alt_m: coords.alt || 0,
-            speed_kts: 30.0,
-            source: 'tomtom_traffic',
-          };
-          fetch('/api/escort/ping', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-          }).catch(() => {
-            fetch(`http://${host}:8000/api/escort/ping`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(payload),
-            }).catch(() => {});
-          });
-        } catch (e) {}
-      }
-    }
-  }, 250);
 
   let escortHudExpanded = true;
 
@@ -1851,16 +1634,16 @@
       `;
     }
 
-    // Interactive Tagging Form
     html += `
+      <!-- Register New Escort Asset Form -->
       <div style="margin-top: 10px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.12);">
         <div style="font-size: 10px; font-weight: bold; color: #00ffcc; margin-bottom: 6px; letter-spacing: 0.5px; display: flex; justify-content: space-between;">
-          <span>TAG LIVE TRAFFIC VEHICLE</span>
-          <span style="opacity: 0.7;">TomTom / OSM</span>
+          <span>TAG ESCORT ASSET / CONVOY</span>
+          <span style="opacity: 0.7;">Sentinel Escort</span>
         </div>
         <div style="display: flex; gap: 6px; margin-bottom: 6px;">
-          <input id="sidecar-tag-input" type="text" placeholder="e.g. VEH-15108" style="
-            flex: 1;
+          <input id="sidecar-tag-name" type="text" placeholder="Name (e.g. VIP Phone)" style="
+            flex: 1.2;
             min-width: 0;
             background: rgba(0,0,0,0.6);
             border: 1px solid rgba(0, 255, 204, 0.4);
@@ -1868,10 +1651,36 @@
             border-radius: 4px;
             padding: 5px 8px;
             font-size: 11px;
+          " />
+          <input id="sidecar-tag-id" type="text" placeholder="ID (VIP-1)" style="
+            flex: 0.9;
+            min-width: 0;
+            background: rgba(0,0,0,0.6);
+            border: 1px solid rgba(0, 255, 204, 0.4);
+            color: #00ffcc;
+            border-radius: 4px;
+            padding: 5px 8px;
+            font-size: 11px;
             font-family: monospace;
           " />
+        </div>
+        <div style="display: flex; gap: 6px; margin-bottom: 6px;">
+          <select id="sidecar-tag-type" style="
+            flex: 1.2;
+            background: rgba(0,0,0,0.6);
+            border: 1px solid rgba(0, 255, 204, 0.4);
+            color: #fff;
+            border-radius: 4px;
+            padding: 5px 6px;
+            font-size: 11px;
+          ">
+            <option value="person" selected>👤 VIP Phone</option>
+            <option value="vehicle">🚙 Convoy / Car</option>
+            <option value="boat">🚤 Vessel</option>
+            <option value="aircraft">✈️ Aircraft</option>
+          </select>
           <input id="sidecar-radius-input" type="number" value="15" min="1" max="100" style="
-            width: 46px;
+            width: 48px;
             background: rgba(0,0,0,0.6);
             border: 1px solid rgba(0, 255, 204, 0.4);
             color: #00ffcc;
@@ -1894,9 +1703,59 @@
             white-space: nowrap;
           ">+ TAG</button>
         </div>
-        <div id="sidecar-tag-chips-container" style="display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: 9px; margin-top: 4px;">
-          <span style="color: #8899aa;">Nearby:</span>
-          <div id="sidecar-tag-chips" style="display: inline-flex; flex-wrap: wrap; gap: 4px;"></div>
+
+        <!-- Android Mobile GPS Transmitter Card -->
+        <div style="
+          margin-top: 8px;
+          padding: 8px 10px;
+          background: rgba(0, 255, 204, 0.08);
+          border: 1px solid rgba(0, 255, 204, 0.3);
+          border-radius: 6px;
+        ">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+            <div style="font-size: 10px; font-weight: bold; color: #00ffcc; display: flex; align-items: center; gap: 4px;">
+              <span>📱</span> PHONE GPS TRANSMITTER
+            </div>
+            <span style="font-size: 8px; background: rgba(0,255,136,0.2); color: #00ff88; border: 1px solid #00ff88; padding: 1px 4px; border-radius: 3px; font-weight: bold;">LIVE BEACON</span>
+          </div>
+          <div style="font-size: 9px; color: #8899aa; margin-bottom: 6px;">
+            Open on your Android phone to transmit live GPS:
+          </div>
+          <div id="sidecar-gps-url" style="
+            font-size: 10px;
+            font-family: monospace;
+            color: #00ff88;
+            background: rgba(0,0,0,0.5);
+            padding: 4px 6px;
+            border-radius: 4px;
+            word-break: break-all;
+            user-select: all;
+            margin-bottom: 6px;
+          ">http://${window.location.hostname || '192.168.20.120'}:8080/gps</div>
+          <div style="display: flex; gap: 6px;">
+            <button id="sidecar-copy-gps-btn" style="
+              flex: 1;
+              background: rgba(255,255,255,0.08);
+              border: 1px solid rgba(255,255,255,0.2);
+              color: #fff;
+              font-size: 9px;
+              padding: 4px;
+              border-radius: 3px;
+              cursor: pointer;
+              font-weight: bold;
+            ">📋 COPY URL</button>
+            <a id="sidecar-open-gps-link" href="/gps" target="_blank" style="
+              background: #00ffcc;
+              color: #000;
+              font-size: 9px;
+              padding: 4px 8px;
+              border-radius: 3px;
+              text-decoration: none;
+              font-weight: bold;
+              display: inline-flex;
+              align-items: center;
+            ">OPEN ↗</a>
+          </div>
         </div>
       </div>
     `;
@@ -1915,8 +1774,7 @@
         const id = btn.getAttribute('data-id');
         const isCurrentlyTracked = activeFollowVehicleId && (
           id === activeFollowVehicleId ||
-          normalizeVehicleId(id) === activeFollowVehicleId ||
-          (getNumericVehicleId(id) !== null && getNumericVehicleId(id) === getNumericVehicleId(activeFollowVehicleId))
+          normalizeVehicleId(id) === activeFollowVehicleId
         );
 
         if (isCurrentlyTracked) {
@@ -1939,63 +1797,45 @@
     });
 
     const tagBtn = document.getElementById('sidecar-tag-btn');
-    const tagInput = document.getElementById('sidecar-tag-input');
+    const nameInput = document.getElementById('sidecar-tag-name');
+    const idInput = document.getElementById('sidecar-tag-id');
+    const typeSelect = document.getElementById('sidecar-tag-type');
     const radiusInput = document.getElementById('sidecar-radius-input');
 
-    if (tagBtn && tagInput) {
+    if (tagBtn) {
       tagBtn.onclick = async () => {
-        const val = tagInput.value.trim();
-        if (!val) {
-          tagInput.focus();
+        const idVal = (idInput?.value || '').trim();
+        const nameVal = (nameInput?.value || '').trim() || (idVal ? `Escort ${idVal}` : 'VIP Asset');
+        if (!idVal && !nameVal) {
+          idInput?.focus();
           return;
         }
+        const finalId = idVal || nameVal.replace(/\s+/g, '_').toUpperCase();
+        const typeVal = typeSelect?.value || 'person';
         const radius = Number(radiusInput?.value || 15);
+
         tagBtn.textContent = 'TAGGING...';
         tagBtn.disabled = true;
         try {
-          await tagTrafficVehicle(val, radius);
-          tagInput.value = '';
+          await tagEscortAsset(finalId, nameVal, typeVal, radius);
+          if (idInput) idInput.value = '';
+          if (nameInput) nameInput.value = '';
         } finally {
           tagBtn.textContent = '+ TAG';
           tagBtn.disabled = false;
         }
       };
-
-      tagInput.onkeydown = (e) => {
-        if (e.key === 'Enter') tagBtn.click();
-      };
     }
 
-    // Populate nearby vehicle suggestion chips
-    const chipsContainer = document.getElementById('sidecar-tag-chips');
-    if (chipsContainer) {
-      const detected = getActiveTrafficVehiclesSample(5);
-      if (detected.length === 0) {
-        chipsContainer.innerHTML = `<span style="color: #667788; font-style: italic;">Enable Traffic layer to detect cars</span>`;
-      } else {
-        chipsContainer.innerHTML = detected.map(d => `
-          <button class="sidecar-chip-btn" data-id="${d.id}" style="
-            background: rgba(0, 255, 204, 0.12);
-            border: 1px solid rgba(0, 255, 204, 0.4);
-            color: #00ffcc;
-            font-family: monospace;
-            font-size: 9px;
-            padding: 2px 6px;
-            border-radius: 3px;
-            cursor: pointer;
-          ">${d.id}</button>
-        `).join('');
-
-        chipsContainer.querySelectorAll('.sidecar-chip-btn').forEach(chip => {
-          chip.onclick = () => {
-            const vid = chip.getAttribute('data-id');
-            if (tagInput) {
-              tagInput.value = vid;
-              tagBtn?.click();
-            }
-          };
-        });
-      }
+    const copyGpsBtn = document.getElementById('sidecar-copy-gps-btn');
+    if (copyGpsBtn) {
+      copyGpsBtn.onclick = () => {
+        const host = window.location.hostname || '192.168.20.120';
+        const url = `http://${host}:8080/gps`;
+        navigator.clipboard?.writeText?.(url);
+        copyGpsBtn.textContent = '✓ COPIED!';
+        setTimeout(() => { copyGpsBtn.textContent = '📋 COPY URL'; }, 2000);
+      };
     }
 
     updateTrackingHudState();
@@ -2033,16 +1873,12 @@
     stopTrackingVehicle();
   };
 
-  window.__godsEyeSidecarTagTrafficVehicle = (vehicleId, bubbleRadiusKm = 15.0, name = null) => {
-    return tagTrafficVehicle(vehicleId, bubbleRadiusKm, name);
+  window.__godsEyeSidecarTagEscortAsset = (deviceId, name = null, type = 'person', bubbleRadiusKm = 15.0) => {
+    return tagEscortAsset(deviceId, name, type, bubbleRadiusKm);
   };
 
   window.__godsEyeSidecarUntagDevice = (deviceId) => {
     return untagEscortDevice(deviceId);
-  };
-
-  window.__godsEyeSidecarGetDetectedTrafficVehicles = (limit = 10) => {
-    return getActiveTrafficVehiclesSample(limit);
   };
 
   // Wire Cesium viewer follower and state listeners on ready

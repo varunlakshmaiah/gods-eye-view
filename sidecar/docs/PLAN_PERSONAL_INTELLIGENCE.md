@@ -19,30 +19,30 @@ Transform the current Gods-Eye-View Sidecar from a **reactive query engine** (wh
 
 ```mermaid
 flowchart TD
-    subgraph Phase1 ["Phase 1: Ingestion & Storage (COMPLETED)"]
+    subgraph Phase1 ["Phase 1: Ingestion & Storage (COMPLETED v1.3.0)"]
         P1A["Tile38 Hot In-Memory Geofencing (120s TTL)"]
         P1B["TimescaleDB 4D Telemetry Archive (30d Rolling)"]
         P1C["PostGIS Static Geobase (44k Assets in 30MB)"]
         P1D["36 Unified MCP Tools (Claude Desktop)"]
     end
 
-    subgraph Phase2 ["Phase 2: Tactical Tripwires & Alert Bus (IMMEDIATE)"]
-        P2A["AOI & Watchlist Configuration (YAML / DB)"]
-        P2B["Real-time Tripwire & Anomaly Daemon (Tile38 Hooks)"]
+    subgraph Phase2 ["Phase 2: Tactical Tripwires & Alert Bus (COMPLETED v1.4.0)"]
+        P2A["AOI & Watchlist Configuration (watchlists.json)"]
+        P2B["Real-time Tripwire & Anomaly Sentinel Daemon"]
         P2C["Emergency Squawk & Threat Detectors"]
-        P2D["Multi-Channel Alert Dispatcher (Telegram / Webhook)"]
+        P2D["Multi-Channel Alert Dispatcher (Telegram / Webhook / HUD)"]
     end
 
-    subgraph Phase3 ["Phase 3: Autonomous AI Watchstander (AGENTIC)"]
-        P3A["Automated INTSUM Scheduled Briefings"]
-        P3B["Proactive Cockpit Dispatch (Auto-Fly on Alert)"]
-        P3C["Pattern-of-Life (PoL) Trajectory Analytics"]
+    subgraph Phase3 ["Phase 3: Autonomous AI Watchstander (COMPLETED v1.5.0 - v1.7.0)"]
+        P3A["Automated INTSUM Scheduled Briefings (v1.5.0)"]
+        P3B["Proactive Cockpit Dispatch & 3D AOI Rings (v1.5.0)"]
+        P3C["Pattern-of-Life Dark Contact & Maneuver Engine (v1.7.0)"]
     end
 
-    subgraph Phase4 ["Phase 4: Kinematics & Sovereign SDR (ADVANCED)"]
-        P4A["Kinematic CPA / TCPA Collision Vectors"]
-        P4B["3D Radar & Visual Engagement Fans"]
-        P4C["Edge RTL-SDR USB Hardware Ingest ($30 Dongle)"]
+    subgraph Phase4 ["Phase 4: Kinematics & Sovereign SDR (COMPLETED v1.8.0 - v1.9.0)"]
+        P4A["Kinematic CPA / TCPA Collision Vectors (v1.6.0)"]
+        P4B["3D Radar Horizons & Coverage Domes in Cesium (v1.8.0)"]
+        P4C["Sovereign Edge RTL-SDR Radio Receiver & Feeder (v1.9.0)"]
     end
 
     Phase1 --> Phase2
@@ -124,9 +124,16 @@ A unified dispatcher sending structured alerts:
 
 ---
 
-## 6. Implementation Deliverables & Next Action
+## 6. Implementation Deliverables & Release Ledger
 
-To initiate Phase 2 immediately, the recommended next steps are:
-1. **Create `sidecar/config/watchlists.yml`** for user-defined AOIs, airports, and alert thresholds.
-2. **Build `sidecar/proxy-tee/src/alerts/` engine** to detect squawks, fire proximity, and cable anchor-drag events.
-3. **Build the Telegram / Webhook notification bridge** with message formatting and direct globe links.
+All roadmap phases have been fully implemented, verified, and released under semantic tags:
+
+| Version | Milestone | Key Deliverables | Tool Count |
+| :--- | :--- | :--- | :--- |
+| **`v1.3.0-sidecar`** | Phase 1 (Ingestion & Storage) | Tile38 Hot Cache, TimescaleDB 4D Archive, PostGIS Geobase, Co-Pilot WebSocket Bridge | 36 Tools |
+| **`v1.4.0-sidecar`** | Phase 2 (Tactical Tripwires & Alerts) | Bangalore Default AOI, Sentinel Evaluation Daemon, Unified Multi-Channel Dispatcher (HUD, Telegram, Discord, Slack) | 40 Tools |
+| **`v1.5.0-sidecar`** | Phase 3.1 & 3.2 (Autonomous Watchstander) | Automated 12h INTSUM Briefings, 3D Glowing Cyan AOI Rings & Badges in Cesium | 42 Tools |
+| **`v1.6.0-sidecar`** | Phase 4.1 (Kinematic CPA / TCPA Vectors) | 4D CPA / TCPA Collision Vectors, Proximity Separation Conflict Scanner | 44 Tools |
+| **`v1.7.0-sidecar`** | Phase 3.3 (Pattern-of-Life Anomaly Engine) | Dark Contact Transponder Silence Detector, Flight Maneuver Anomaly Detector | 46 Tools |
+| **`v1.8.0-sidecar`** | Phase 4.2 (Radar Coverage Horizons) | 4/3 Earth Radius Horizon Physics, 3D Sensor Range Domes, Concentric Rings & Azimuth Radials in Cesium | 50 Tools |
+| **`v1.9.0-sidecar`** | Phase 4.3 (Sovereign Edge SDR Radio Ingestion) | RTL-SDR Radio Ingestion Pipeline (Mode-S 1090MHz / AIS 162MHz), Feeder Container, Sovereign RF Offline Tracking | **55 Tools** |

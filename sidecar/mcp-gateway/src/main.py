@@ -79,6 +79,13 @@ class CockpitControlRequest(BaseModel):
     action: str
     params: Dict[str, Any] = {}
 
+class StaticInfraRequest(BaseModel):
+    lat: float
+    lon: float
+    radius_km: float = 50.0
+    category: Optional[str] = None
+    limit: int = 50
+
 # ----------------------------------------------------------------------------
 # Tool Implementation Functions
 # ----------------------------------------------------------------------------
@@ -278,6 +285,12 @@ async def api_predict_satellite_passes(req: SatellitePassesRequest):
 async def api_control_visual_cockpit(req: CockpitControlRequest):
     return await tool_control_visual_cockpit(req.action, req.params)
 
+@app.post("/api/tools/find_static_infrastructure")
+async def api_find_static_infrastructure(req: StaticInfraRequest):
+    return await router.query_static_infrastructure(
+        req.lat, req.lon, req.radius_km, req.category, req.limit
+    )
+
 @app.get("/api/mcp/tools")
 async def api_list_all_tools():
     """List all registered tools (both native and federated) with their schemas."""
@@ -361,6 +374,15 @@ async def predict_satellite_passes(
 async def control_visual_cockpit(action: str, params: Dict[str, Any]) -> str:
     """Send camera flight, entity selection, layer toggle, or time replay to browser globe via WebSocket."""
     res = await tool_control_visual_cockpit(action, params)
+    import json
+    return json.dumps(res, indent=2)
+
+@mcp_server.tool()
+async def find_static_infrastructure(
+    lat: float, lon: float, radius_km: float = 50.0, category: Optional[str] = None, limit: int = 50
+) -> str:
+    """Query permanently persisted global infrastructure in local PostGIS (datacenters, dams, military bases, submarine cables, landing stations) in sub-milliseconds."""
+    res = await router.query_static_infrastructure(lat, lon, radius_km, category, limit)
     import json
     return json.dumps(res, indent=2)
 

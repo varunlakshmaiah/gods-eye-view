@@ -132,7 +132,15 @@ curl -X POST http://localhost:8000/api/tools/control_visual_cockpit \
   }'
 ```
 
-### 6. Upstream Federated Core Tools (30 Tools)
+### 6. `find_static_infrastructure`
+Performs ultra-fast (<5ms) local PostGIS radius queries over 44,000+ permanently persisted global infrastructure assets (`datacenter`, `dam`, `military_installation`, `submarine_cable`, `cable_landing_point`) with zero external API calls.
+```bash
+curl -X POST http://localhost:8000/api/tools/find_static_infrastructure \
+  -H "Content-Type: application/json" \
+  -d '{"lat": 37.7749, "lon": -122.4194, "radius_km": 50, "category": "datacenter", "limit": 10}'
+```
+
+### 7. Upstream Federated Core Tools (30 Tools)
 `mcp-gateway` automatically discovers and proxies all 30 upstream God's Eye View MCP tools directly:
 - **`situation_brief`**: Unified operational picture (weather, quakes, fires, aircraft, ships, cyclones).
 - **`military_awareness`**: 250km radar perimeter of military aircraft, surface warships, and defense installations.

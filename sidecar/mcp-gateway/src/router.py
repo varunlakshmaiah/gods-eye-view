@@ -225,4 +225,71 @@ class TemporalRouter:
 
         return contacts
 
+    async def query_static_infrastructure(
+        self,
+        lat: float,
+        lon: float,
+        radius_km: float = 50.0,
+        category: Optional[str] = None,
+        limit: int = 50,
+    ) -> List[Dict[str, Any]]:
+        """Query permanent fixed infrastructure (datacenters, dams, military bases, submarine cables)."""
+        if not self.pg_pool:
+            return []
+
+        radius_m = radius_km * 1000.0
+        results = []
+        try:
+            async with self.pg_pool.acquire() as conn:
+                if category:
+                    rows = await conn.fetch(
+                        """
+                        SELECT id, category, name, operator, capacity, country_code,
+                               round((ST_Distance(geom, ST_SetSRID(ST_MakePoint($2, $1), 4326)::geography) / 1000)::numeric, 1) AS distance_km,
+                               ST_Y(ST_Centroid(geom::geometry)) AS lat,
+                               ST_X(ST_Centroid(geom::geometry)) AS lon,
+                               metadata
+                        FROM static_infrastructure
+                        WHERE category = $4
+                          AND ST_DWithin(geom, ST_SetSRID(ST_MakePoint($2, $1), 4326)::geography, $3)
+                        ORDER BY distance_km ASC
+                        LIMIT $5
+                        """,
+                        lat, lon, radius_m, category, limit
+                    )
+                else:
+                    rows = await conn.fetch(
+                        """
+                        SELECT id, category, name, operator, capacity, country_code,
+                               round((ST_Distance(geom, ST_SetSRID(ST_MakePoint($2, $1), 4326)::geography) / 1000)::numeric, 1) AS distance_km,
+                               ST_Y(ST_Centroid(geom::geometry)) AS lat,
+                               ST_X(ST_Centroid(geom::geometry)) AS lon,
+                               metadata
+                        FROM static_infrastructure
+                        WHERE ST_DWithin(geom, ST_SetSRID(ST_MakePoint($2, $1), 4326)::geography, $3)
+                        ORDER BY distance_km ASC
+                        LIMIT $4
+                        """,
+                        lat, lon, radius_m, limit
+                    )
+
+                for r in rows:
+                    meta = json.loads(r["metadata"]) if isinstance(r["metadata"], str) else (r["metadata"] or {})
+                    results.append({
+                        "id": r["id"],
+                        "category": r["category"],
+                        "name": r["name"],
+                        "distance_km": float(r["distance_km"]),
+                        "lat": float(r["lat"]) if r["lat"] is not None else None,
+                        "lon": float(r["lon"]) if r["lon"] is not None else None,
+                        "operator": r["operator"],
+                        "capacity": r["capacity"],
+                        "country_code": r["country_code"],
+                        "details": meta
+                    })
+        except Exception as e:
+            print(f"[TemporalRouter] Static infrastructure query error: {e}")
+
+        return results
+
 router = TemporalRouter()

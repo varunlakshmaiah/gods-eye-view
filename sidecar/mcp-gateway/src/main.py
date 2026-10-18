@@ -25,6 +25,7 @@ from .alerts.dispatcher import dispatcher, TacticalAlert
 from .alerts.engine import tripwire_engine
 from .intsum.engine import intsum_engine
 from .kinematics.cpa import calculate_pairwise_cpa, calculate_aoi_intercept, scan_airspace_conflicts
+from .pol.engine import pol_engine
 
 # ----------------------------------------------------------------------------
 # Lifespan Lifecycle
@@ -497,6 +498,14 @@ async def api_scan_conflicts(req: ScanConflictsRequest):
         req.lat, req.lon, req.radius_km, req.min_cpa_km, req.max_tcpa_min
     )
 
+@app.get("/api/pol/dark_contacts")
+async def api_detect_dark_contacts(aoi: str = "Bangalore", silence_min: int = 15, layer: str = "all"):
+    return await pol_engine.detect_dark_contacts(aoi, silence_min, layer)
+
+@app.get("/api/pol/maneuvers")
+async def api_detect_maneuver_anomalies(aoi: str = "Bangalore", max_fpm: float = 3500.0):
+    return await pol_engine.detect_maneuver_anomalies(aoi, max_fpm)
+
 @app.get("/api/mcp/tools")
 async def api_list_all_tools():
     """List all registered tools (both native and federated) with their schemas."""
@@ -661,6 +670,24 @@ async def scan_proximity_conflicts(
 ) -> str:
     """Radar conflict scanner: detect converging aircraft violating separation minimums or inbound on AOI intercept trajectories."""
     res = await tool_scan_proximity_conflicts(lat, lon, radius_km, min_cpa_km, max_tcpa_min)
+    import json
+    return json.dumps(res, indent=2)
+
+@mcp_server.tool()
+async def detect_dark_contacts(
+    aoi_name: str = "Bangalore", silence_window_min: int = 15, layer: str = "all"
+) -> str:
+    """Identify non-cooperative dark contacts whose transponders ceased broadcasting while airborne or underway at sea."""
+    res = await pol_engine.detect_dark_contacts(aoi_name, silence_window_min, layer)
+    import json
+    return json.dumps(res, indent=2)
+
+@mcp_server.tool()
+async def detect_maneuver_anomalies(
+    aoi_name: str = "Bangalore", max_descent_rate_fpm: float = 3500.0
+) -> str:
+    """Detect severe kinematic flight anomalies such as rapid uncoordinated descents (> 3,500 fpm) and high-G deviations."""
+    res = await pol_engine.detect_maneuver_anomalies(aoi_name, max_descent_rate_fpm)
     import json
     return json.dumps(res, indent=2)
 

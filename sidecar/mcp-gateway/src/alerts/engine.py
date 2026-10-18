@@ -16,6 +16,7 @@ from typing import Dict, Any, List, Optional, Set
 from .dispatcher import dispatcher, TacticalAlert
 from ..router import router
 from ..kinematics.cpa import scan_airspace_conflicts
+from ..pol.engine import pol_engine
 
 
 def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -257,6 +258,60 @@ class TripwireEngine:
                                 lat=aoi["lat"],
                                 lon=aoi["lon"],
                                 metadata=penetrator
+                            )
+                            asyncio.create_task(dispatcher.dispatch(alert))
+                except Exception as e:
+                    pass
+
+        # --------------------------------------------------------------------
+        # 5. Pattern-of-Life: Dark Contacts & Rapid Maneuvers
+        # --------------------------------------------------------------------
+        if router.pg_pool:
+            for aoi in self._config.get("aois", []):
+                if not aoi.get("enabled", True):
+                    continue
+                try:
+                    # Check for dark contacts (silent for > 15 min while mid-air)
+                    dark_res = await pol_engine.detect_dark_contacts(
+                        aoi_name=aoi["name"],
+                        silence_window_min=15,
+                    )
+                    for dc in dark_res.get("dark_contacts", []):
+                        dark_key = f"dark_{aoi['id']}_{dc['entity_id']}"
+                        if not self._is_on_cooldown(dark_key):
+                            alert = TacticalAlert(
+                                severity="CRITICAL" if dc["last_altitude_m"] > 3000 else "WARNING",
+                                category="DARK_CONTACT_ANOMALY",
+                                title=f"Transponder Silence: Contact {dc['entity_id']}",
+                                message=f"{dc['suspicion_reason']} inside {aoi['name']} AOI. Silent for {dc['silence_duration_minutes']} min.",
+                                aoi_name=aoi["name"],
+                                aoi_id=aoi["id"],
+                                entity_id=dc["entity_id"],
+                                lat=dc["last_lat"],
+                                lon=dc["last_lon"],
+                                metadata=dc
+                            )
+                            asyncio.create_task(dispatcher.dispatch(alert))
+
+                    # Check for severe maneuver anomalies (> 3500 fpm descent)
+                    maneuver_res = await pol_engine.detect_maneuver_anomalies(
+                        aoi_name=aoi["name"],
+                        max_descent_rate_fpm=3500.0,
+                    )
+                    for man in maneuver_res.get("anomalies", []):
+                        man_key = f"maneuver_{aoi['id']}_{man['entity_id']}"
+                        if not self._is_on_cooldown(man_key):
+                            alert = TacticalAlert(
+                                severity=man["severity"],
+                                category="MANEUVER_ANOMALY",
+                                title=f"Severe Descent: Contact {man['entity_id']}",
+                                message=f"Aircraft descending at {man['descent_rate_fpm']} fpm ({man['altitude_drop_m']}m drop) inside {aoi['name']} perimeter.",
+                                aoi_name=aoi["name"],
+                                aoi_id=aoi["id"],
+                                entity_id=man["entity_id"],
+                                lat=man["lat"],
+                                lon=man["lon"],
+                                metadata=man
                             )
                             asyncio.create_task(dispatcher.dispatch(alert))
                 except Exception as e:

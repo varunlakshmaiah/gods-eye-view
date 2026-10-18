@@ -518,6 +518,20 @@
           break;
         }
 
+        case 'tag_traffic_vehicle': {
+          const vehicleId = params.vehicle_id;
+          const radiusKm = Number(params.bubble_radius_km || 15.0);
+          const name = params.name || `Traffic ${vehicleId}`;
+          result = await tagTrafficVehicle(vehicleId, radiusKm, name);
+          break;
+        }
+
+        case 'untag_escort_device': {
+          const deviceId = params.device_id;
+          result = await untagEscortDevice(deviceId);
+          break;
+        }
+
         default:
           throw new Error(`Unknown action: ${action}`);
       }
@@ -1078,6 +1092,658 @@
     console.log(`%c[GodsEyeSidecar]%c Rendered ${cachedEscortDevices.length} Escort Guardian Bubble(s) directly on viewer.entities.`, 'color: #00ff88; font-weight: bold;', 'color: inherit;');
   }
 
+  function normalizeVehicleId(rawId) {
+    if (!rawId) return '';
+    const trimmed = String(rawId).trim().replace(/\s+/g, '');
+    const m = trimmed.match(/^(?:VEH-?)?(\d+)$/i);
+    if (m) {
+      return `VEH-${m[1].padStart(4, '0')}`;
+    }
+    return trimmed.toUpperCase();
+  }
+
+  function getNumericVehicleId(rawId) {
+    if (!rawId) return null;
+    const num = String(rawId).replace(/[^0-9]/g, '');
+    return num ? Number(num) : null;
+  }
+
+  function cartesianToLatLon(pos) {
+    if (!pos) return null;
+    const { viewer } = getCesiumGlobals();
+    if (!viewer) return null;
+
+    try {
+      const ellipsoid = viewer.scene?.globe?.ellipsoid || viewer.scene?.mapProjection?.ellipsoid;
+      if (ellipsoid?.cartesianToCartographic) {
+        const carto = ellipsoid.cartesianToCartographic(pos);
+        if (carto) {
+          return {
+            lat: toDegrees(carto.latitude),
+            lon: toDegrees(carto.longitude),
+            alt: carto.height || 0,
+          };
+        }
+      }
+    } catch (e) {}
+
+    // Fallback: WGS84 closed-form Cartesian to Geodetic
+    try {
+      const x = pos.x, y = pos.y, z = pos.z;
+      const a = 6378137.0;
+      const f = 1.0 / 298.257223563;
+      const b = a * (1.0 - f);
+      const e2 = (a * a - b * b) / (a * a);
+      const ep2 = (a * a - b * b) / (b * b);
+      const p = Math.hypot(x, y);
+      const theta = Math.atan2(z * a, p * b);
+      const lon = Math.atan2(y, x);
+      const lat = Math.atan2(z + ep2 * b * Math.pow(Math.sin(theta), 3), p - e2 * a * Math.pow(Math.cos(theta), 3));
+      return {
+        lat: toDegrees(lat),
+        lon: toDegrees(lon),
+        alt: 0,
+      };
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function findTrafficDot(targetId) {
+    const { gev } = getCesiumGlobals();
+    const trafficLayer = gev?.dataManager?.layers?.get ? gev.dataManager.layers.get('traffic') : gev?.dataManager?.layers?.traffic;
+    const module = trafficLayer?.module || trafficLayer;
+    if (!module) return null;
+
+    const numTarget = getNumericVehicleId(targetId);
+    let found = null;
+
+    if (typeof module.visitMotionDots === 'function') {
+      module.visitMotionDots((id, roadKey, point, road) => {
+        if (found) return;
+        const num = Number(id);
+        if (num === numTarget || String(id) === String(targetId) || `VEH-${id}` === targetId || `VEH-${String(id).padStart(4, '0')}` === targetId) {
+          found = { id, roadKey, point, road };
+        }
+      });
+    }
+    return found;
+  }
+
+  function getActiveTrafficVehiclesSample(limit = 6) {
+    const { gev } = getCesiumGlobals();
+    const trafficLayer = gev?.dataManager?.layers?.get ? gev.dataManager.layers.get('traffic') : gev?.dataManager?.layers?.traffic;
+    const module = trafficLayer?.module || trafficLayer;
+    if (!module) return [];
+
+    if (typeof module.getDetectableObjects === 'function') {
+      try {
+        const objs = module.getDetectableObjects({ maxCount: limit });
+        if (Array.isArray(objs) && objs.length > 0) {
+          return objs.map(o => ({
+            id: o.id,
+            num: getNumericVehicleId(o.id),
+            position: o.position,
+          }));
+        }
+      } catch (e) {}
+    }
+
+    const sample = [];
+    if (typeof module.visitMotionDots === 'function') {
+      try {
+        module.visitMotionDots((id, roadKey, point, road) => {
+          if (sample.length >= limit) return;
+          sample.push({
+            id: `VEH-${String(id).padStart(4, '0')}`,
+            num: id,
+            position: point?.position,
+          });
+        });
+      } catch (e) {}
+    }
+    return sample;
+  }
+
+  const trackedTrafficVehicles = new Map();
+
+  async function tagTrafficVehicle(rawVehicleId, bubbleRadiusKm = 15.0, customName = null) {
+    const vehicleId = normalizeVehicleId(rawVehicleId);
+    const numId = getNumericVehicleId(vehicleId);
+    const name = customName || `Guardian ${vehicleId}`;
+    const radius = Number(bubbleRadiusKm) || 15.0;
+
+    // 1. Ensure Street Traffic layer is enabled in God's Eye View
+    const { gev } = getCesiumGlobals();
+    if (gev?.dataManager?.enableLayer) {
+      try {
+        gev.dataManager.enableLayer('traffic');
+      } catch (e) {}
+    }
+
+    // 2. Locate vehicle dot in current traffic layer
+    let initialCoords = null;
+    const dot = findTrafficDot(vehicleId);
+    if (dot && dot.point?.position) {
+      initialCoords = cartesianToLatLon(dot.point.position);
+    }
+
+    // Fallback if dot not in current viewport
+    if (!initialCoords) {
+      const vp = getCameraViewport();
+      if (vp && vp.lat && vp.lon) {
+        initialCoords = { lat: vp.lat, lon: vp.lon, alt: 0 };
+      } else {
+        initialCoords = { lat: 12.9716, lon: 77.5946, alt: 0 };
+      }
+    }
+
+    // 3. Register in local tracking Map for the kinematic follower loop
+    const record = {
+      vehicleId,
+      numId,
+      name,
+      bubbleRadiusKm: radius,
+      lastLat: initialCoords.lat,
+      lastLon: initialCoords.lon,
+      lastAlt: initialCoords.alt || 0,
+      lastPingTime: 0,
+    };
+    trackedTrafficVehicles.set(vehicleId, record);
+    if (numId) trackedTrafficVehicles.set(numId, record);
+
+    // 4. Register with Sentinel Escort Engine backend
+    try {
+      const host = window.location.hostname || 'localhost';
+      let res = await fetch('/api/escort/tag', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          device_id: vehicleId,
+          name,
+          device_type: 'vehicle',
+          lat: initialCoords.lat,
+          lon: initialCoords.lon,
+          alt_m: initialCoords.alt || 0,
+          bubble_radius_km: radius,
+          source: 'tomtom_traffic',
+        }),
+      }).catch(() => null);
+
+      if (!res || !res.ok) {
+        await fetch(`http://${host}:8000/api/escort/tag`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            device_id: vehicleId,
+            name,
+            device_type: 'vehicle',
+            lat: initialCoords.lat,
+            lon: initialCoords.lon,
+            alt_m: initialCoords.alt || 0,
+            bubble_radius_km: radius,
+            source: 'tomtom_traffic',
+          }),
+        }).catch(() => {});
+      }
+    } catch (err) {
+      console.warn('[GodsEyeSidecar] Error registering escort tag with backend:', err);
+    }
+
+    // 5. Instantly refresh visual escort bubbles
+    await syncEscortVisuals();
+
+    // 6. Fly camera directly to target vehicle with nadir top-down reconnaissance view
+    if (initialCoords && initialCoords.lat && initialCoords.lon) {
+      handleCommand({
+        action: 'fly_to_coordinate',
+        params: {
+          lat: initialCoords.lat,
+          lon: initialCoords.lon,
+          altitude_m: Math.max(12000, radius * 2200),
+          pitch_deg: -89.9,
+          heading_deg: 0,
+          duration_s: 2.0,
+        },
+      });
+    }
+
+    console.log(`%c[GodsEyeSidecar]%c Tagged traffic vehicle ${vehicleId} with ${radius}km Guardian Bubble at (${initialCoords.lat.toFixed(4)}, ${initialCoords.lon.toFixed(4)}).`, 'color: #00ff88; font-weight: bold;', 'color: inherit;');
+    return { ok: true, vehicle_id: vehicleId, name, radius_km: radius, initial_coords: initialCoords };
+  }
+
+  async function untagEscortDevice(rawDeviceId) {
+    const deviceId = normalizeVehicleId(rawDeviceId);
+    const numId = getNumericVehicleId(rawDeviceId);
+    trackedTrafficVehicles.delete(deviceId);
+    if (numId) trackedTrafficVehicles.delete(numId);
+    for (const [k, v] of trackedTrafficVehicles.entries()) {
+      if (v.vehicleId === deviceId || (numId && v.numId === numId)) {
+        trackedTrafficVehicles.delete(k);
+      }
+    }
+
+    // Call backend DELETE
+    try {
+      const host = window.location.hostname || 'localhost';
+      let res = await fetch(`/api/escort/device/${encodeURIComponent(deviceId)}`, { method: 'DELETE' }).catch(() => null);
+      if (!res || !res.ok) {
+        await fetch(`http://${host}:8000/api/escort/device/${encodeURIComponent(deviceId)}`, { method: 'DELETE' }).catch(() => null);
+      }
+      if (rawDeviceId !== deviceId) {
+        await fetch(`/api/escort/device/${encodeURIComponent(rawDeviceId)}`, { method: 'DELETE' }).catch(() => null);
+        await fetch(`http://${host}:8000/api/escort/device/${encodeURIComponent(rawDeviceId)}`, { method: 'DELETE' }).catch(() => null);
+      }
+    } catch (e) {}
+
+    // Clean up Cesium entities
+    const { viewer, gev } = getCesiumGlobals();
+    if (viewer?.entities) {
+      const toRemove = viewer.entities.values
+        .filter(e => typeof e.id === 'string' && (e.id.includes(deviceId) || e.id.includes(rawDeviceId)))
+        .map(e => e.id);
+      for (const id of toRemove) {
+        viewer.entities.removeById(id);
+      }
+      gev?.requestRender?.('escort-bubble-removed');
+      viewer.scene?.requestRender?.();
+    }
+
+    await syncEscortVisuals();
+    return { ok: true, device_id: deviceId };
+  }
+
+  function updateEscortEntityPosition(deviceId, lat, lon, alt = 0, radiusKm = 15.0) {
+    const { viewer, Cesium, gev } = getCesiumGlobals();
+    if (!viewer?.entities || !Cesium) return;
+
+    const radiusMeters = radiusKm * 1000.0;
+    const center = Cesium.Cartesian3.fromDegrees(lon, lat, alt);
+    const groundCenter = Cesium.Cartesian3.fromDegrees(lon, lat, 0);
+
+    const ringEnt = viewer.entities.getById(`${ESCORT_PREFIX}ring_${deviceId}`);
+    const fillEnt = viewer.entities.getById(`${ESCORT_PREFIX}fill_${deviceId}`);
+    const innerEnt = viewer.entities.getById(`${ESCORT_PREFIX}inner_${deviceId}`);
+    const pillarEnt = viewer.entities.getById(`${ESCORT_PREFIX}pillar_${deviceId}`);
+    const pointEnt = viewer.entities.getById(`${ESCORT_PREFIX}point_${deviceId}`);
+    const labelEnt = viewer.entities.getById(`${ESCORT_PREFIX}label_${deviceId}`);
+
+    if (ringEnt && fillEnt) {
+      const outerPositions = computeCirclePositions(Cesium, lon, lat, radiusMeters, 72);
+      if (ringEnt.polyline) ringEnt.polyline.positions = outerPositions;
+      if (fillEnt.polygon) fillEnt.polygon.hierarchy = outerPositions;
+
+      const innerBufferMeters = Math.min(5000.0, radiusMeters * 0.35);
+      const innerPositions = computeCirclePositions(Cesium, lon, lat, innerBufferMeters, 48);
+      if (innerEnt?.polyline) innerEnt.polyline.positions = innerPositions;
+
+      if (pillarEnt?.polyline) {
+        pillarEnt.polyline.positions = [groundCenter, Cesium.Cartesian3.fromDegrees(lon, lat, 4000)];
+      }
+      if (pointEnt) pointEnt.position = center;
+      if (labelEnt) {
+        labelEnt.position = center;
+        const currentText = labelEnt.label?.text?.getValue?.() || labelEnt.label?.text || '';
+        const lines = String(currentText).split('\n');
+        if (lines.length >= 3) {
+          lines[2] = `Pos: ${lat.toFixed(4)}, ${lon.toFixed(4)}`;
+          labelEnt.label.text = lines.join('\n');
+        }
+      }
+      gev?.requestRender?.('escort-bubble-move');
+      viewer.scene?.requestRender?.();
+
+      const cached = cachedEscortDevices.find(d => d.device_id === deviceId);
+      if (cached) {
+        cached.lat = lat;
+        cached.lon = lon;
+        const hudFlyBtn = document.querySelector(`.sidecar-hud-fly-btn[data-id="${deviceId}"]`);
+        if (hudFlyBtn) {
+          hudFlyBtn.setAttribute('data-lat', lat);
+          hudFlyBtn.setAttribute('data-lon', lon);
+        }
+      }
+    } else {
+      const cached = cachedEscortDevices.find(d => d.device_id === deviceId);
+      if (cached) {
+        cached.lat = lat;
+        cached.lon = lon;
+        renderEscortBubbles(cachedEscortDevices);
+      }
+    }
+  }
+
+  // Continuous Kinematic Traffic Follower Loop (1.5s interval)
+  setInterval(() => {
+    if (trackedTrafficVehicles.size === 0) return;
+    const { viewer, gev } = getCesiumGlobals();
+    if (!viewer) return;
+
+    const trafficLayer = gev?.dataManager?.layers?.get ? gev.dataManager.layers.get('traffic') : gev?.dataManager?.layers?.traffic;
+    const module = trafficLayer?.module || trafficLayer;
+    if (!module || typeof module.visitMotionDots !== 'function') return;
+
+    const foundDots = new Map();
+    module.visitMotionDots((id, roadKey, point, road) => {
+      const num = Number(id);
+      for (const [key, tracked] of trackedTrafficVehicles.entries()) {
+        if (tracked.numId === num || tracked.vehicleId === `VEH-${id}` || tracked.vehicleId === String(id)) {
+          if (point?.position) {
+            foundDots.set(tracked.vehicleId, point.position);
+          }
+        }
+      }
+    });
+
+    const now = Date.now();
+    const processed = new Set();
+    for (const tracked of trackedTrafficVehicles.values()) {
+      if (processed.has(tracked.vehicleId)) continue;
+      processed.add(tracked.vehicleId);
+
+      const pos = foundDots.get(tracked.vehicleId);
+      if (!pos) continue;
+
+      const coords = cartesianToLatLon(pos);
+      if (!coords || !coords.lat || !coords.lon) continue;
+
+      const dLat = Math.abs(coords.lat - tracked.lastLat);
+      const dLon = Math.abs(coords.lon - tracked.lastLon);
+      const moved = dLat > 0.00001 || dLon > 0.00001;
+
+      tracked.lastLat = coords.lat;
+      tracked.lastLon = coords.lon;
+      tracked.lastAlt = coords.alt || 0;
+
+      updateEscortEntityPosition(tracked.vehicleId, coords.lat, coords.lon, coords.alt || 0, tracked.bubbleRadiusKm);
+
+      if (now - tracked.lastPingTime > 2500 || moved) {
+        tracked.lastPingTime = now;
+        try {
+          const host = window.location.hostname || 'localhost';
+          const payload = {
+            device_id: tracked.vehicleId,
+            lat: coords.lat,
+            lon: coords.lon,
+            alt_m: coords.alt || 0,
+            speed_kts: 30.0,
+            source: 'tomtom_traffic',
+          };
+          fetch('/api/escort/ping', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          }).catch(() => {
+            fetch(`http://${host}:8000/api/escort/ping`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload),
+            }).catch(() => {});
+          });
+        } catch (e) {}
+      }
+    }
+  }, 1500);
+
+  let escortHudExpanded = true;
+
+  function renderEscortHud(devices) {
+    let hud = document.getElementById('sidecar-escort-hud');
+    const deviceList = Array.isArray(devices) ? devices : cachedEscortDevices;
+
+    if (!hud) {
+      hud = document.createElement('div');
+      hud.id = 'sidecar-escort-hud';
+      hud.style.cssText = `
+        position: fixed;
+        top: 76px;
+        right: 20px;
+        z-index: 99999;
+        background: rgba(10, 18, 30, 0.95);
+        backdrop-filter: blur(12px);
+        border: 1px solid rgba(0, 255, 136, 0.6);
+        border-radius: 8px;
+        padding: 12px 14px;
+        color: #fff;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.85), 0 0 16px rgba(0,255,136,0.25);
+        min-width: 310px;
+        max-width: 370px;
+        pointer-events: auto;
+      `;
+      document.body.appendChild(hud);
+    }
+
+    if (!escortHudExpanded) {
+      hud.innerHTML = `
+        <div style="display: flex; align-items: center; justify-content: space-between; cursor: pointer;" id="sidecar-hud-expand-toggle">
+          <div style="font-size: 11px; font-weight: bold; color: #00ff88; display: flex; align-items: center; gap: 6px;">
+            <span>🛡️</span> GUARDIAN BUBBLES (${deviceList.length})
+          </div>
+          <button style="background: transparent; border: none; color: #00ff88; font-size: 11px; font-weight: bold; cursor: pointer;">▲ EXPAND</button>
+        </div>
+      `;
+      const tog = document.getElementById('sidecar-hud-expand-toggle');
+      if (tog) tog.onclick = () => { escortHudExpanded = true; renderEscortHud(deviceList); };
+      return;
+    }
+
+    let html = `
+      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.12); padding-bottom: 6px;">
+        <div style="font-size: 12px; font-weight: bold; color: #00ff88; letter-spacing: 0.5px; display: flex; align-items: center; gap: 6px;">
+          <span>🛡️</span> GUARDIAN BUBBLES (${deviceList.length})
+        </div>
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <div style="font-size: 9px; background: rgba(0,255,136,0.15); color: #00ff88; padding: 2px 6px; border-radius: 3px; font-weight: bold;">
+            LIVE
+          </div>
+          <button id="sidecar-hud-collapse-btn" style="background: transparent; border: none; color: #aaa; font-size: 11px; cursor: pointer; padding: 0 2px;" title="Minimize">▼</button>
+        </div>
+      </div>
+    `;
+
+    if (deviceList.length === 0) {
+      html += `
+        <div style="font-size: 11px; color: #8899aa; padding: 8px; background: rgba(255,255,255,0.03); border-radius: 6px; margin-bottom: 8px; text-align: center;">
+          No vehicles or targets tagged yet.<br>Tag any live vehicle below to track with a Guardian Bubble.
+        </div>
+      `;
+    }
+
+    for (const dev of deviceList) {
+      const isAlert = dev.status === 'ALERT';
+      const isAdv = dev.status === 'ADVISORY';
+      const color = isAlert ? '#ff3366' : (isAdv ? '#ffaa00' : '#00ff88');
+      const typeStr = (dev.device_type || '').toLowerCase();
+      const nameStr = (dev.name || '').toLowerCase();
+      const icon = (typeStr.includes('vehicle') || nameStr.includes('suv') || nameStr.includes('car') || nameStr.includes('convoy') || nameStr.includes('veh')) ? '🚙' : '👤';
+
+      html += `
+        <div style="margin-bottom: 8px; padding: 8px; background: rgba(255,255,255,0.05); border: 1px solid ${color}55; border-radius: 6px; display: flex; align-items: center; justify-content: space-between; gap: 6px;">
+          <div style="flex: 1; min-width: 0;">
+            <div style="font-size: 11px; font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+              ${icon} ${dev.name}
+            </div>
+            <div style="font-size: 10px; color: ${color}; margin-top: 2px;">
+              ● ${dev.status || 'SAFE'} • ${dev.bubble_radius_km || 15}km bubble
+            </div>
+          </div>
+          <button class="sidecar-hud-fly-btn" data-id="${dev.device_id}" data-lat="${dev.lat}" data-lon="${dev.lon}" data-r="${dev.bubble_radius_km || 15}" style="
+            background: ${color};
+            border: none;
+            color: #000;
+            font-weight: bold;
+            font-size: 10px;
+            padding: 5px 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            letter-spacing: 0.5px;
+            white-space: nowrap;
+          ">FLY TO</button>
+          <button class="sidecar-hud-untag-btn" data-id="${dev.device_id}" style="
+            background: rgba(255, 51, 102, 0.2);
+            border: 1px solid #ff3366;
+            color: #ff3366;
+            font-weight: bold;
+            font-size: 10px;
+            padding: 5px 7px;
+            border-radius: 4px;
+            cursor: pointer;
+          " title="Untag and remove bubble">✕</button>
+        </div>
+      `;
+    }
+
+    // Interactive Tagging Form
+    html += `
+      <div style="margin-top: 10px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.12);">
+        <div style="font-size: 10px; font-weight: bold; color: #00ffcc; margin-bottom: 6px; letter-spacing: 0.5px; display: flex; justify-content: space-between;">
+          <span>TAG LIVE TRAFFIC VEHICLE</span>
+          <span style="opacity: 0.7;">TomTom / OSM</span>
+        </div>
+        <div style="display: flex; gap: 6px; margin-bottom: 6px;">
+          <input id="sidecar-tag-input" type="text" placeholder="e.g. VEH-15108" style="
+            flex: 1;
+            min-width: 0;
+            background: rgba(0,0,0,0.6);
+            border: 1px solid rgba(0, 255, 204, 0.4);
+            color: #fff;
+            border-radius: 4px;
+            padding: 5px 8px;
+            font-size: 11px;
+            font-family: monospace;
+          " />
+          <input id="sidecar-radius-input" type="number" value="15" min="1" max="100" style="
+            width: 46px;
+            background: rgba(0,0,0,0.6);
+            border: 1px solid rgba(0, 255, 204, 0.4);
+            color: #00ffcc;
+            border-radius: 4px;
+            padding: 5px 4px;
+            font-size: 11px;
+            font-family: monospace;
+            text-align: center;
+          " title="Bubble Radius in km" />
+          <button id="sidecar-tag-btn" style="
+            background: #00ff88;
+            color: #000;
+            border: none;
+            font-weight: bold;
+            font-size: 10px;
+            border-radius: 4px;
+            padding: 5px 10px;
+            cursor: pointer;
+            letter-spacing: 0.5px;
+            white-space: nowrap;
+          ">+ TAG</button>
+        </div>
+        <div id="sidecar-tag-chips-container" style="display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: 9px; margin-top: 4px;">
+          <span style="color: #8899aa;">Nearby:</span>
+          <div id="sidecar-tag-chips" style="display: inline-flex; flex-wrap: wrap; gap: 4px;"></div>
+        </div>
+      </div>
+    `;
+
+    hud.innerHTML = html;
+
+    // Attach listeners
+    const collapseBtn = document.getElementById('sidecar-hud-collapse-btn');
+    if (collapseBtn) {
+      collapseBtn.onclick = () => { escortHudExpanded = false; renderEscortHud(deviceList); };
+    }
+
+    const flyBtns = hud.querySelectorAll('.sidecar-hud-fly-btn');
+    flyBtns.forEach(btn => {
+      btn.onclick = () => {
+        const lat = Number(btn.getAttribute('data-lat'));
+        const lon = Number(btn.getAttribute('data-lon'));
+        const rKm = Number(btn.getAttribute('data-r'));
+        handleCommand({
+          action: 'fly_to_coordinate',
+          params: {
+            lat,
+            lon,
+            altitude_m: Math.max(12000, rKm * 2200),
+            pitch_deg: -89.9,
+            heading_deg: 0,
+            duration_s: 2.0,
+          },
+        });
+      };
+    });
+
+    const untagBtns = hud.querySelectorAll('.sidecar-hud-untag-btn');
+    untagBtns.forEach(btn => {
+      btn.onclick = async () => {
+        const id = btn.getAttribute('data-id');
+        if (id) {
+          btn.textContent = '...';
+          await untagEscortDevice(id);
+        }
+      };
+    });
+
+    const tagBtn = document.getElementById('sidecar-tag-btn');
+    const tagInput = document.getElementById('sidecar-tag-input');
+    const radiusInput = document.getElementById('sidecar-radius-input');
+
+    if (tagBtn && tagInput) {
+      tagBtn.onclick = async () => {
+        const val = tagInput.value.trim();
+        if (!val) {
+          tagInput.focus();
+          return;
+        }
+        const radius = Number(radiusInput?.value || 15);
+        tagBtn.textContent = 'TAGGING...';
+        tagBtn.disabled = true;
+        try {
+          await tagTrafficVehicle(val, radius);
+          tagInput.value = '';
+        } finally {
+          tagBtn.textContent = '+ TAG';
+          tagBtn.disabled = false;
+        }
+      };
+
+      tagInput.onkeydown = (e) => {
+        if (e.key === 'Enter') tagBtn.click();
+      };
+    }
+
+    // Populate nearby vehicle suggestion chips
+    const chipsContainer = document.getElementById('sidecar-tag-chips');
+    if (chipsContainer) {
+      const detected = getActiveTrafficVehiclesSample(5);
+      if (detected.length === 0) {
+        chipsContainer.innerHTML = `<span style="color: #667788; font-style: italic;">Enable Traffic layer to detect cars</span>`;
+      } else {
+        chipsContainer.innerHTML = detected.map(d => `
+          <button class="sidecar-chip-btn" data-id="${d.id}" style="
+            background: rgba(0, 255, 204, 0.12);
+            border: 1px solid rgba(0, 255, 204, 0.4);
+            color: #00ffcc;
+            font-family: monospace;
+            font-size: 9px;
+            padding: 2px 6px;
+            border-radius: 3px;
+            cursor: pointer;
+          ">${d.id}</button>
+        `).join('');
+
+        chipsContainer.querySelectorAll('.sidecar-chip-btn').forEach(chip => {
+          chip.onclick = () => {
+            const vid = chip.getAttribute('data-id');
+            if (tagInput) {
+              tagInput.value = vid;
+              tagBtn?.click();
+            }
+          };
+        });
+      }
+    }
+  }
+
   async function syncEscortVisuals() {
     try {
       const host = window.location.hostname || 'localhost';
@@ -1094,122 +1760,25 @@
     } catch (e) {}
   }
 
-  function renderEscortHud(devices) {
-    let hud = document.getElementById('sidecar-escort-hud');
-    if (!devices || devices.length === 0) {
-      if (hud) hud.remove();
-      return;
-    }
-    if (!hud) {
-      hud = document.createElement('div');
-      hud.id = 'sidecar-escort-hud';
-      hud.style.cssText = `
-        position: fixed;
-        top: 76px;
-        right: 20px;
-        z-index: 99999;
-        background: rgba(10, 18, 30, 0.94);
-        backdrop-filter: blur(10px);
-        border: 1px solid rgba(0, 255, 136, 0.6);
-        border-radius: 8px;
-        padding: 12px 14px;
-        color: #fff;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
-        box-shadow: 0 8px 32px rgba(0,0,0,0.85), 0 0 16px rgba(0,255,136,0.3);
-        min-width: 290px;
-        max-width: 360px;
-        pointer-events: auto;
-      `;
-      document.body.appendChild(hud);
-    }
-
-    let html = `
-      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.12); padding-bottom: 6px;">
-        <div style="font-size: 12px; font-weight: bold; color: #00ff88; letter-spacing: 0.5px; display: flex; align-items: center; gap: 6px;">
-          <span>🛡️</span> GUARDIAN BUBBLES (${devices.length})
-        </div>
-        <div style="font-size: 9px; background: rgba(0,255,136,0.15); color: #00ff88; padding: 2px 6px; border-radius: 3px; font-weight: bold;">
-          LIVE
-        </div>
-      </div>
-    `;
-
-    for (const dev of devices) {
-      const isAlert = dev.status === 'ALERT';
-      const isAdv = dev.status === 'ADVISORY';
-      const color = isAlert ? '#ff3366' : (isAdv ? '#ffaa00' : '#00ff88');
-      const typeStr = (dev.device_type || '').toLowerCase();
-      const nameStr = (dev.name || '').toLowerCase();
-      const icon = (typeStr.includes('vehicle') || nameStr.includes('suv') || nameStr.includes('car') || nameStr.includes('convoy')) ? '🚙' : '👤';
-
-      html += `
-        <div style="margin-bottom: 8px; padding: 8px; background: rgba(255,255,255,0.05); border: 1px solid ${color}55; border-radius: 6px; display: flex; align-items: center; justify-content: space-between; gap: 8px;">
-          <div style="flex: 1; min-width: 0;">
-            <div style="font-size: 11px; font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
-              ${icon} ${dev.name}
-            </div>
-            <div style="font-size: 10px; color: ${color}; margin-top: 2px;">
-              ● ${dev.status || 'SAFE'} • ${dev.bubble_radius_km || 25}km bubble
-            </div>
-          </div>
-          <button class="sidecar-hud-fly-btn" data-lat="${dev.lat}" data-lon="${dev.lon}" data-r="${dev.bubble_radius_km || 25}" style="
-            background: ${color};
-            border: none;
-            color: #000;
-            font-weight: bold;
-            font-size: 10px;
-            padding: 5px 10px;
-            border-radius: 4px;
-            cursor: pointer;
-            letter-spacing: 0.5px;
-            white-space: nowrap;
-          ">FLY TO</button>
-        </div>
-      `;
-    }
-
-    hud.innerHTML = html;
-
-    const btns = hud.querySelectorAll('.sidecar-hud-fly-btn');
-    btns.forEach(btn => {
-      btn.onclick = () => {
-        const lat = Number(btn.getAttribute('data-lat'));
-        const lon = Number(btn.getAttribute('data-lon'));
-        const rKm = Number(btn.getAttribute('data-r'));
-        handleCommand({
-          action: 'fly_to_coordinate',
-          params: {
-            lat,
-            lon,
-            altitude_m: Math.max(15000, rKm * 2500),
-            pitch_deg: -89.9,
-            heading_deg: 0,
-            duration_s: 2.0
-          }
-        });
-      };
-    });
-  }
-
+  // Global APIs on window for developer console and integration
   window.__godsEyeSidecarFlyTo = (lat, lon, alt = 45000, pitch_deg = -89.9) => {
     handleCommand({
       action: 'fly_to_coordinate',
-      params: { lat, lon, altitude_m: alt, pitch_deg, duration_s: 2.0 }
+      params: { lat, lon, altitude_m: alt, pitch_deg, duration_s: 2.0 },
     });
   };
 
-  async function syncEscortVisuals() {
-    try {
-      const host = window.location.hostname || 'localhost';
-      const res = await fetch(`http://${host}:8000/api/escort/devices`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.devices) {
-          renderEscortBubbles(data.devices);
-        }
-      }
-    } catch (e) {}
-  }
+  window.__godsEyeSidecarTagTrafficVehicle = (vehicleId, bubbleRadiusKm = 15.0, name = null) => {
+    return tagTrafficVehicle(vehicleId, bubbleRadiusKm, name);
+  };
+
+  window.__godsEyeSidecarUntagDevice = (deviceId) => {
+    return untagEscortDevice(deviceId);
+  };
+
+  window.__godsEyeSidecarGetDetectedTrafficVehicles = (limit = 10) => {
+    return getActiveTrafficVehiclesSample(limit);
+  };
 
   // Periodic polling for dynamic moving bubbles
   setInterval(() => {

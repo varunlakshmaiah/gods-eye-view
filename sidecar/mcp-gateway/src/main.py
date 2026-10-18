@@ -1233,6 +1233,55 @@ async def tag_escort_device(
     return json.dumps(res, indent=2)
 
 @mcp_server.tool()
+async def tag_traffic_vehicle(
+    vehicle_id: str,
+    bubble_radius_km: float = 15.0,
+    name: Optional[str] = None,
+) -> str:
+    """Tag a live vehicle from TomTom/Street Traffic data (e.g. VEH-15108 or VEH-15119) as a Guardian Vehicle with a dynamic protective bubble and continuous kinematic tracking."""
+    clean_id = vehicle_id.strip()
+    custom_name = name or f"Guardian {clean_id}"
+
+    # Broadcast to browser copilot bridge to lock onto moving dot and initiate kinematic follow
+    await hub.broadcast_json({
+        "type": "command",
+        "action": "tag_traffic_vehicle",
+        "params": {
+            "vehicle_id": clean_id,
+            "bubble_radius_km": bubble_radius_km,
+            "name": custom_name,
+        }
+    })
+
+    import json
+    return json.dumps({
+        "status": "tagged",
+        "vehicle_id": clean_id,
+        "name": custom_name,
+        "bubble_radius_km": bubble_radius_km,
+        "tracking_mode": "kinematic_live_tomtom"
+    }, indent=2)
+
+@mcp_server.tool()
+async def untag_escort_device(device_id: str) -> str:
+    """Untag and remove a Guardian escort device or traffic vehicle, disabling its protective bubble."""
+    clean_id = device_id.strip()
+    escort_engine.remove_device(clean_id)
+    await hub.broadcast_json({
+        "type": "command",
+        "action": "untag_escort_device",
+        "params": {
+            "device_id": clean_id,
+        }
+    })
+    await hub.broadcast_json({"type": "escort_sync", "devices": escort_engine.list_devices()})
+    import json
+    return json.dumps({
+        "status": "untagged",
+        "device_id": clean_id,
+    }, indent=2)
+
+@mcp_server.tool()
 async def update_escort_location(
     device_id: str,
     lat: float,

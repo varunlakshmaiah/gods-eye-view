@@ -165,13 +165,29 @@
       <span>🛡️</span> GOD'S EYE VIEW
     </div>
     <div id="status-badge" class="badge">OFFLINE</div>
-  <!-- Insecure Context Warning Banner -->
+  <!-- Native Android App Download Card -->
+  <div style="background: linear-gradient(135deg, rgba(0, 255, 136, 0.15), rgba(0, 255, 204, 0.08)); border: 1px solid #00ff88; border-radius: 8px; padding: 14px; margin-bottom: 14px;">
+    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
+      <div style="color: #00ff88; font-weight: bold; font-size: 13px; display: flex; align-items: center; gap: 6px;">
+        <span>📱</span> NATIVE ANDROID APP (25 KB)
+      </div>
+      <span style="font-size: 9px; background: #00ff88; color: #000; font-weight: bold; padding: 2px 6px; border-radius: 3px;">BACKGROUND WAKE</span>
+    </div>
+    <div style="font-size: 11px; color: #ccffee; line-height: 1.4; margin-bottom: 10px;">
+      Streams high-accuracy GPS 24/7 in the background with screen off. Automatically requests battery whitelist & starts streaming on launch.
+    </div>
+    <a href="/sentinel-gps.apk" download style="display: block; text-align: center; background: #00ff88; color: #000; font-weight: bold; font-size: 13px; padding: 10px; border-radius: 6px; text-decoration: none; letter-spacing: 0.5px;">
+      ⬇️ DOWNLOAD SENTINEL BEACON APK (25 KB)
+    </a>
+  </div>
+
+  <!-- Insecure Context Warning Banner (for web browser mode) -->
   <div id="insecure-banner" style="display: none; background: rgba(255, 51, 102, 0.15); border: 1px solid #ff3366; border-radius: 8px; padding: 12px; margin-bottom: 14px;">
     <div style="color: #ff3366; font-weight: bold; font-size: 13px; margin-bottom: 4px; display: flex; align-items: center; gap: 6px;">
       <span>⚠️</span> BROWSER INSECURE CONTEXT (HTTP)
     </div>
     <div style="font-size: 11px; color: #ffccd5; line-height: 1.4; margin-bottom: 8px;">
-      Chrome on Android blocks hardware GPS on plain HTTP. Tap below to switch to Secure HTTPS (Port 8443) or use the simulation mode.
+      Android Chrome blocks browser GPS over plain HTTP. Tap below to switch to Secure HTTPS (Port 8443), or download the native APK above.
     </div>
     <div style="display: flex; gap: 8px;">
       <a id="switch-https-btn" href="#" style="background: #ff3366; color: #fff; text-decoration: none; font-size: 11px; font-weight: bold; padding: 6px 12px; border-radius: 4px; display: inline-block;">
@@ -207,14 +223,9 @@
       <input type="number" id="bubble-radius" value="15" min="1" max="100">
     </div>
 
-    <div style="display: flex; gap: 8px;">
-      <button id="toggle-btn" class="btn btn-start" style="flex: 2;">
-        <span>📡</span> START TRANSMITTING GPS
-      </button>
-      <button id="sim-btn" class="btn" style="flex: 1.2; background: rgba(0, 255, 204, 0.2); border: 1px solid #00ffcc; color: #00ffcc; font-size: 12px;">
-        <span>🧪</span> SIMULATE
-      </button>
-    </div>
+    <button id="toggle-btn" class="btn btn-start">
+      <span>📡</span> START TRANSMITTING GPS
+    </button>
   </div>
 
   <div class="card" id="telemetry-card" style="display: none;">

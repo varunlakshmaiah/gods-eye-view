@@ -118,6 +118,29 @@ app.get(['/gps', '/mobile-gps'], (_req: Request, res: Response) => {
   res.status(404).send('GPS transmitter page not found');
 });
 
+// Serve the Native Android APK download
+app.get(['/sentinel-gps.apk', '/download/apk', '/apk'], (_req: Request, res: Response) => {
+  const possiblePaths = [
+    '/app/ui-bridge/sentinel-gps.apk',
+    path.resolve(process.cwd(), 'ui-bridge/sentinel-gps.apk'),
+    path.resolve(__dirname, '../../ui-bridge/sentinel-gps.apk'),
+    path.resolve(__dirname, '../ui-bridge/sentinel-gps.apk'),
+    path.resolve(process.cwd(), 'sidecar/ui-bridge/sentinel-gps.apk'),
+    path.resolve(process.cwd(), '../ui-bridge/sentinel-gps.apk'),
+  ];
+
+  for (const p of possiblePaths) {
+    if (fs.existsSync(p)) {
+      res.setHeader('Content-Type', 'application/vnd.android.package-archive');
+      res.setHeader('Content-Disposition', 'attachment; filename="sentinel-gps.apk"');
+      res.sendFile(p);
+      return;
+    }
+  }
+
+  res.status(404).send('Sentinel GPS APK not found');
+});
+
 // ----------------------------------------------------------------------------
 // 2. Playback Interceptor Middleware
 // ----------------------------------------------------------------------------

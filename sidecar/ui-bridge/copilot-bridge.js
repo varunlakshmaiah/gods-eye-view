@@ -1762,6 +1762,23 @@
               align-items: center;
             ">OPEN ↗</a>
           </div>
+          <div style="margin-top: 6px;">
+            <a href="/sentinel-gps.apk" download style="
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              gap: 4px;
+              background: rgba(0, 255, 136, 0.15);
+              border: 1px solid #00ff88;
+              color: #00ff88;
+              font-size: 9px;
+              padding: 5px;
+              border-radius: 4px;
+              text-decoration: none;
+              font-weight: bold;
+              letter-spacing: 0.3px;
+            ">⬇️ DOWNLOAD ANDROID APP (25 KB)</a>
+          </div>
         </div>
       </div>
     `;

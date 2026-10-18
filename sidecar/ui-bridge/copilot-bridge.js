@@ -10,6 +10,7 @@
   let socket = null;
   let reconnectAttempts = 0;
   const MAX_RECONNECT_DELAY = 15000;
+  const ESCORT_PREFIX = 'gev_escort_';
 
   function toRadians(degrees) {
     return (degrees * Math.PI) / 180.0;
@@ -62,6 +63,26 @@
     const y = (N + alt) * cosLat * Math.sin(radLon);
     const z = (N * (1.0 - e2) + alt) * sinLat;
     return Cartesian3 ? new Cartesian3(x, y, z) : { x, y, z };
+  }
+
+  function computeCirclePositions(Cesium, centerLon, centerLat, radiusMeters, steps = 64) {
+    const Cartesian3 = Cesium?.Cartesian3 || window.Cesium?.Cartesian3;
+    const positions = [];
+    const latRad = (centerLat * Math.PI) / 180.0;
+    const metersPerLat = 111132.95;
+    const metersPerLon = Math.max(1.0, 111132.95 * Math.cos(latRad));
+
+    for (let i = 0; i <= steps; i++) {
+      const theta = (i * 2.0 * Math.PI) / steps;
+      const dEast = radiusMeters * Math.sin(theta);
+      const dNorth = radiusMeters * Math.cos(theta);
+      const lon = centerLon + dEast / metersPerLon;
+      const lat = centerLat + dNorth / metersPerLat;
+      if (Cartesian3?.fromDegrees) {
+        positions.push(Cartesian3.fromDegrees(lon, lat));
+      }
+    }
+    return positions;
   }
 
   function getCameraViewport() {
@@ -291,13 +312,16 @@
 
         case 'toggle_escort_visuals': {
           const { visible } = params;
-          if (escortDataSource) {
-            escortDataSource.show = visible !== undefined ? Boolean(visible) : !escortDataSource.show;
+          const show = visible !== undefined ? Boolean(visible) : true;
+          if (viewer?.entities) {
+            viewer.entities.values
+              .filter(e => typeof e.id === 'string' && e.id.startsWith(ESCORT_PREFIX))
+              .forEach(e => { e.show = show; });
             gev?.requestRender?.('escort-visibility-toggle');
             viewer.scene?.requestRender?.();
-            result = { visible: escortDataSource.show };
+            result = { visible: show };
           } else {
-            result = { visible: false, message: 'Escort data source not initialized yet' };
+            result = { visible: false, message: 'Viewer entities not ready' };
           }
           break;
         }
@@ -486,32 +510,43 @@
       if (!aoi.enabled) continue;
       const radiusMeters = (aoi.radius_km || 50.0) * 1000.0;
       const center = Cesium.Cartesian3.fromDegrees(aoi.lon, aoi.lat);
+      const ringPositions = computeCirclePositions(Cesium, aoi.lon, aoi.lat, radiusMeters, 64);
 
-      // 1. Semi-transparent glowing tactical geofence fill + outline ring
-      entityTarget.add({
-        id: `aoi_ring_${aoi.id}`,
-        name: `AOI: ${aoi.name}`,
-        position: center,
-        ellipse: {
-          semiMinorAxis: radiusMeters,
-          semiMajorAxis: radiusMeters,
-          material: Cesium.Color.fromCssColorString('rgba(0, 255, 204, 0.08)'),
-          outline: true,
-          outlineColor: Cesium.Color.fromCssColorString('#00ffcc'),
-          outlineWidth: 2,
-          height: 0,
-        },
-      });
+      // 1. Ground-clamped tactical perimeter polyline ring
+      if (ringPositions.length > 2) {
+        entityTarget.add({
+          id: `aoi_ring_${aoi.id}`,
+          name: `AOI: ${aoi.name}`,
+          polyline: {
+            positions: ringPositions,
+            clampToGround: true,
+            width: 3,
+            material: new Cesium.ColorMaterialProperty(Cesium.Color.fromCssColorString('#00ffcc')),
+          },
+        });
+
+        // Semi-transparent glowing tactical geofence fill
+        entityTarget.add({
+          id: `aoi_fill_${aoi.id}`,
+          polygon: {
+            hierarchy: new Cesium.PolygonHierarchy(ringPositions),
+            material: new Cesium.ColorMaterialProperty(Cesium.Color.fromCssColorString('rgba(0, 255, 204, 0.08)')),
+            classificationType: Cesium.ClassificationType ? Cesium.ClassificationType.BOTH : undefined,
+          },
+        });
+      }
 
       // 2. Center Tactical Beacon Point & Label
       entityTarget.add({
         id: `aoi_beacon_${aoi.id}`,
         position: center,
         point: {
-          pixelSize: 8,
+          pixelSize: 10,
           color: Cesium.Color.fromCssColorString('#00ffcc'),
           outlineColor: Cesium.Color.BLACK,
           outlineWidth: 2,
+          heightReference: Cesium.HeightReference ? Cesium.HeightReference.CLAMP_TO_GROUND : undefined,
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
         label: {
           text: `🛡️ ${aoi.name.toUpperCase()} AOI [${aoi.radius_km}km]`,
@@ -521,7 +556,9 @@
           outlineWidth: 3,
           style: Cesium.LabelStyle.FILL_AND_OUTLINE,
           verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-          pixelOffset: new Cesium.Cartesian2(0, -12),
+          pixelOffset: new Cesium.Cartesian2(0, -14),
+          heightReference: Cesium.HeightReference ? Cesium.HeightReference.CLAMP_TO_GROUND : undefined,
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
           distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 8000000),
         },
       });
@@ -692,7 +729,6 @@
     } catch (e) {}
   }
 
-  let escortDataSource = null;
   let cachedEscortDevices = [];
 
   async function renderEscortBubbles(devices) {
@@ -704,16 +740,14 @@
     const Cesium = window.Cesium;
     if (!viewer || !Cesium) return;
 
-    if (!escortDataSource) {
-      if (Cesium.CustomDataSource) {
-        escortDataSource = new Cesium.CustomDataSource('sidecar-escort-bubbles');
-        viewer.dataSources.add(escortDataSource);
+    // Clear existing escort entities directly on viewer.entities
+    if (viewer.entities) {
+      const toRemove = viewer.entities.values
+        .filter(e => typeof e.id === 'string' && e.id.startsWith(ESCORT_PREFIX))
+        .map(e => e.id);
+      for (const id of toRemove) {
+        viewer.entities.removeById(id);
       }
-    }
-
-    const entityTarget = escortDataSource ? escortDataSource.entities : viewer.entities;
-    if (escortDataSource) {
-      escortDataSource.entities.removeAll();
     }
 
     for (const dev of cachedEscortDevices) {
@@ -721,7 +755,6 @@
       const radiusKm = dev.bubble_radius_km || 25.0;
       const radiusMeters = radiusKm * 1000.0;
       const center = Cesium.Cartesian3.fromDegrees(dev.lon, dev.lat, dev.altitude_m || 0);
-      const groundCenter = Cesium.Cartesian3.fromDegrees(dev.lon, dev.lat, 0);
 
       // Status color scheme: SAFE (emerald neon), ADVISORY (tactical amber), ALERT (crimson red)
       const status = (dev.status || 'SAFE').toUpperCase();
@@ -753,66 +786,89 @@
         icon = '👑';
       }
 
-      // 1. Outer Dynamic Guardian Bubble (Translucent glowing geosphere boundary)
-      entityTarget.add({
-        id: `escort_bubble_${dev.device_id}`,
-        name: `Guardian Bubble: ${dev.name}`,
-        position: groundCenter,
-        ellipse: {
-          semiMinorAxis: radiusMeters,
-          semiMajorAxis: radiusMeters,
-          material: Cesium.Color.fromCssColorString(fillRgba),
-          outline: true,
-          outlineColor: Cesium.Color.fromCssColorString(statusColorHex),
-          outlineWidth: 2,
-          classificationType: Cesium.ClassificationType ? Cesium.ClassificationType.BOTH : undefined,
-        },
-      });
+      const outerPositions = computeCirclePositions(Cesium, dev.lon, dev.lat, radiusMeters, 72);
 
-      // 2. Tactical Inner Threat Buffer Ring (5km proximity zone)
+      // 1. Ground-clamped tactical perimeter polyline ring (Guaranteed to render on 3D tiles & terrain)
+      if (outerPositions.length > 2) {
+        viewer.entities.add({
+          id: `${ESCORT_PREFIX}ring_${dev.device_id}`,
+          name: `Guardian Boundary: ${dev.name}`,
+          polyline: {
+            positions: outerPositions,
+            clampToGround: true,
+            width: 4,
+            material: new Cesium.ColorMaterialProperty(Cesium.Color.fromCssColorString(statusColorHex)),
+          },
+        });
+
+        // 2. Translucent geofence fill
+        viewer.entities.add({
+          id: `${ESCORT_PREFIX}fill_${dev.device_id}`,
+          name: `Guardian Fill: ${dev.name}`,
+          polygon: {
+            hierarchy: new Cesium.PolygonHierarchy(outerPositions),
+            material: new Cesium.ColorMaterialProperty(Cesium.Color.fromCssColorString(fillRgba)),
+            classificationType: Cesium.ClassificationType ? Cesium.ClassificationType.BOTH : undefined,
+          },
+        });
+      }
+
+      // 3. Tactical Inner Buffer Ring (5km proximity danger zone)
       const innerBufferMeters = Math.min(5000.0, radiusMeters * 0.35);
-      entityTarget.add({
-        id: `escort_inner_${dev.device_id}`,
-        position: groundCenter,
-        ellipse: {
-          semiMinorAxis: innerBufferMeters,
-          semiMajorAxis: innerBufferMeters,
-          material: Cesium.Color.TRANSPARENT,
-          outline: true,
-          outlineColor: Cesium.Color.fromCssColorString(statusColorHex).withAlpha(0.4),
-          outlineWidth: 1.5,
-          classificationType: Cesium.ClassificationType ? Cesium.ClassificationType.BOTH : undefined,
+      const innerPositions = computeCirclePositions(Cesium, dev.lon, dev.lat, innerBufferMeters, 48);
+      if (innerPositions.length > 2) {
+        viewer.entities.add({
+          id: `${ESCORT_PREFIX}inner_${dev.device_id}`,
+          polyline: {
+            positions: innerPositions,
+            clampToGround: true,
+            width: 2,
+            material: new Cesium.ColorMaterialProperty(Cesium.Color.fromCssColorString(statusColorHex).withAlpha(0.6)),
+          },
+        });
+      }
+
+      // 4. Vertical 4,000m Tactical Light Pillar (visible from high orbit / any angle)
+      viewer.entities.add({
+        id: `${ESCORT_PREFIX}pillar_${dev.device_id}`,
+        polyline: {
+          positions: [
+            Cesium.Cartesian3.fromDegrees(dev.lon, dev.lat, 0),
+            Cesium.Cartesian3.fromDegrees(dev.lon, dev.lat, 4000),
+          ],
+          width: 3,
+          material: new Cesium.ColorMaterialProperty(Cesium.Color.fromCssColorString(statusColorHex).withAlpha(0.85)),
         },
       });
 
-      // 3. Center Entity Point Marker
-      entityTarget.add({
-        id: `escort_point_${dev.device_id}`,
+      // 5. Center Tactical Point Marker
+      viewer.entities.add({
+        id: `${ESCORT_PREFIX}point_${dev.device_id}`,
         position: center,
         point: {
-          pixelSize: 14,
+          pixelSize: 16,
           color: Cesium.Color.fromCssColorString(statusColorHex),
           outlineColor: Cesium.Color.BLACK,
-          outlineWidth: 2,
+          outlineWidth: 3,
           heightReference: Cesium.HeightReference ? Cesium.HeightReference.CLAMP_TO_GROUND : undefined,
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
       });
 
-      // 4. Center Tactical HUD Badge Label
+      // 6. Center Tactical HUD Badge Label
       const threatCount = dev.threat_count || (dev.active_threats ? dev.active_threats.length : 0);
-      entityTarget.add({
-        id: `escort_label_${dev.device_id}`,
+      viewer.entities.add({
+        id: `${ESCORT_PREFIX}label_${dev.device_id}`,
         position: center,
         label: {
           text: `${icon} ${dev.name.toUpperCase()} [${radiusKm}km BUBBLE]\nStatus: ${statusBadge} | Threats: ${threatCount}\nPos: ${dev.lat.toFixed(4)}, ${dev.lon.toFixed(4)}`,
-          font: 'bold 12px monospace',
+          font: 'bold 13px monospace',
           fillColor: Cesium.Color.fromCssColorString(statusColorHex),
           outlineColor: Cesium.Color.BLACK,
-          outlineWidth: 3,
+          outlineWidth: 4,
           style: Cesium.LabelStyle.FILL_AND_OUTLINE,
           verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-          pixelOffset: new Cesium.Cartesian2(0, -18),
+          pixelOffset: new Cesium.Cartesian2(0, -22),
           heightReference: Cesium.HeightReference ? Cesium.HeightReference.CLAMP_TO_GROUND : undefined,
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
           distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 10000000),
@@ -823,7 +879,7 @@
     gev?.requestRender?.('escort-bubbles-rendered');
     viewer.scene?.requestRender?.();
     renderEscortHud(cachedEscortDevices);
-    console.log(`%c[GodsEyeSidecar]%c Rendered ${cachedEscortDevices.length} Escort Guardian Bubble(s) in 3D Cesium.`, 'color: #00ff88; font-weight: bold;', 'color: inherit;');
+    console.log(`%c[GodsEyeSidecar]%c Rendered ${cachedEscortDevices.length} Escort Guardian Bubble(s) directly on viewer.entities.`, 'color: #00ff88; font-weight: bold;', 'color: inherit;');
   }
 
   function renderEscortHud(devices) {
@@ -837,7 +893,7 @@
       hud.id = 'sidecar-escort-hud';
       hud.style.cssText = `
         position: fixed;
-        bottom: 24px;
+        top: 76px;
         right: 20px;
         z-index: 99999;
         background: rgba(10, 18, 30, 0.94);

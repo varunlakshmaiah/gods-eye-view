@@ -26,11 +26,22 @@
     const Cartesian3 = viewer?.camera?.position?.constructor;
     const Color = viewer?.scene?.backgroundColor?.constructor;
     const Ellipsoid = viewer?.scene?.globe?.ellipsoid?.constructor;
+    const HeadingPitchRange = viewer?.camera?.constructor?.DEFAULT_OFFSET?.constructor || function (h = 0, p = 0, r = 0) {
+      this.heading = h;
+      this.pitch = p;
+      this.range = r;
+    };
+    const BoundingSphere = function (center, radius = 0) {
+      this.center = center;
+      this.radius = radius;
+    };
 
     const shim = {
       Cartesian3,
       Color,
       Ellipsoid,
+      HeadingPitchRange,
+      BoundingSphere,
       HeightReference: {
         NONE: 0,
         CLAMP_TO_GROUND: 1,
@@ -247,38 +258,92 @@
         case 'fly_to_coordinate': {
           const lat = Number(params.lat);
           const lon = Number(params.lon);
-          const alt = Number(params.altitude_m || 5000);
-          const duration = Math.max(0.2, Number(params.duration_s || 2.5));
-          const heading = toRadians(Number(params.heading_deg || 0));
-          const pitch = toRadians(Number(params.pitch_deg || -45));
+          const alt = Number(params.altitude_m || params.range_m || 5000);
+          const duration = Math.max(0.2, Number(params.duration_s || params.duration || 2.5));
+          const headingDeg = Number(params.heading_deg || 0);
+          const pitchDeg = Number(params.pitch_deg !== undefined ? params.pitch_deg : -89.9);
+          const heading = toRadians(headingDeg);
+          const pitch = toRadians(pitchDeg);
           const roll = 0.0;
 
-          const destination = computeCartesian(viewer, lon, lat, alt);
-          if (!destination) {
-            throw new Error(`Failed to calculate 3D Cartesian coordinates for (${lat}, ${lon}, ${alt})`);
+          const targetCartesian = computeCartesian(viewer, lon, lat, 0);
+          if (!targetCartesian) {
+            throw new Error(`Failed to calculate 3D Cartesian coordinates for (${lat}, ${lon})`);
           }
 
-          console.log(`[GodsEyeSidecar] Flying camera to [lon=${lon}, lat=${lat}, alt=${alt}m] over ${duration}s`);
+          console.log(`[GodsEyeSidecar] Flying camera to target [lon=${lon}, lat=${lat}, alt=${alt}m, pitch=${pitchDeg}°] over ${duration}s`);
 
-          viewer.camera.flyTo({
-            destination,
-            orientation: { heading, pitch, roll },
-            duration,
-            complete: () => {
-              console.log('[GodsEyeSidecar] Camera flight completed');
-              gev?.requestRender?.('copilot-flight-complete');
-              viewer.scene?.requestRender?.();
-            },
-            cancel: () => {
-              console.log('[GodsEyeSidecar] Camera flight cancelled');
-            },
-          });
+          let flightStarted = false;
+
+          // Attempt 1: Native Cesium flyToBoundingSphere for exact focal targeting
+          if (typeof viewer?.camera?.flyToBoundingSphere === 'function') {
+            try {
+              const boundingSphere = Cesium?.BoundingSphere
+                ? new Cesium.BoundingSphere(targetCartesian, 0)
+                : { center: targetCartesian, radius: 0 };
+              const offset = Cesium?.HeadingPitchRange
+                ? new Cesium.HeadingPitchRange(heading, pitch, alt)
+                : { heading, pitch, range: alt };
+
+              viewer.camera.flyToBoundingSphere(boundingSphere, {
+                offset,
+                duration,
+                complete: () => {
+                  console.log('[GodsEyeSidecar] Camera flight completed (flyToBoundingSphere)');
+                  gev?.requestRender?.('copilot-flight-complete');
+                  viewer.scene?.requestRender?.();
+                },
+                cancel: () => {
+                  console.log('[GodsEyeSidecar] Camera flight cancelled');
+                },
+              });
+              flightStarted = true;
+            } catch (err) {
+              console.warn('[GodsEyeSidecar] flyToBoundingSphere fallback to trigonometric flyTo:', err);
+            }
+          }
+
+          // Attempt 2: Direct camera.flyTo with ground-offset pullback trigonometry
+          if (!flightStarted) {
+            let eyeLon = lon;
+            let eyeLat = lat;
+            let eyeAlt = alt;
+
+            const absPitch = Math.abs(pitchDeg);
+            // If oblique pitch (not straight down), pull back the camera eye so the look-at ray lands dead-center on (lat, lon)
+            if (absPitch < 88.0 && absPitch > 1.0) {
+              const pitchRad = toRadians(absPitch);
+              const groundDist = alt / Math.tan(pitchRad);
+              const dNorth = -groundDist * Math.cos(heading);
+              const dEast = -groundDist * Math.sin(heading);
+              const latRad = toRadians(lat);
+              const metersPerLat = 111132.95;
+              const metersPerLon = Math.max(1.0, 111132.95 * Math.cos(latRad));
+              eyeLat = lat + dNorth / metersPerLat;
+              eyeLon = lon + dEast / metersPerLon;
+            }
+
+            const destination = computeCartesian(viewer, eyeLon, eyeLat, eyeAlt);
+            viewer.camera.flyTo({
+              destination,
+              orientation: { heading, pitch, roll },
+              duration,
+              complete: () => {
+                console.log('[GodsEyeSidecar] Camera flight completed (trigonometric flyTo)');
+                gev?.requestRender?.('copilot-flight-complete');
+                viewer.scene?.requestRender?.();
+              },
+              cancel: () => {
+                console.log('[GodsEyeSidecar] Camera flight cancelled');
+              },
+            });
+          }
 
           // Kick render governor so frames animate smoothly
           gev?.requestRender?.('copilot-flight-start');
           viewer.scene?.requestRender?.();
 
-          result = { lat, lon, alt, duration };
+          result = { lat, lon, alt, duration, pitch_deg: pitchDeg };
           break;
         }
 
@@ -401,13 +466,16 @@
             (d.name && d.name.toLowerCase().includes((device_id || '').toLowerCase()))
           );
           if (target && target.lat !== undefined && target.lon !== undefined) {
-            const altM = Math.max(6000, (target.bubble_radius_km || 25) * 1500);
+            const rKm = Number(target.bubble_radius_km || 25);
+            const altM = Math.max(15000, rKm * 2500);
             await handleCommand({
               action: 'fly_to_coordinate',
               params: {
                 lat: target.lat,
                 lon: target.lon,
                 altitude_m: altM,
+                pitch_deg: -89.9,
+                heading_deg: 0,
                 duration_s: 2.5
               }
             });
@@ -1050,17 +1118,19 @@
             lat,
             lon,
             altitude_m: Math.max(15000, rKm * 2500),
-            duration_s: 2.5
+            pitch_deg: -89.9,
+            heading_deg: 0,
+            duration_s: 2.0
           }
         });
       };
     });
   }
 
-  window.__godsEyeSidecarFlyTo = (lat, lon, alt = 45000) => {
+  window.__godsEyeSidecarFlyTo = (lat, lon, alt = 45000, pitch_deg = -89.9) => {
     handleCommand({
       action: 'fly_to_coordinate',
-      params: { lat, lon, altitude_m: alt, duration_s: 2.5 }
+      params: { lat, lon, altitude_m: alt, pitch_deg, duration_s: 2.0 }
     });
   };
 

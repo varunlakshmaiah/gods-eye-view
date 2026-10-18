@@ -92,6 +92,22 @@ class WsCopilotHub:
             "clients_count": len(self.active_connections),
         }
 
+    async def broadcast_json(self, data: Dict[str, Any]) -> int:
+        """Broadcast arbitrary JSON payload to all connected browser clients."""
+        payload_text = json.dumps(data)
+        dead_sockets = set()
+        count = 0
+        for ws in list(self.active_connections):
+            try:
+                await ws.send_text(payload_text)
+                count += 1
+            except Exception:
+                dead_sockets.add(ws)
+
+        for ws in dead_sockets:
+            self.disconnect(ws)
+        return count
+
     async def get_active_viewport(self) -> Dict[str, Any]:
         """Get latest camera viewport from active browser."""
         if not self.is_browser_connected():

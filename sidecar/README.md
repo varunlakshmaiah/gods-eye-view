@@ -152,14 +152,38 @@ curl -X POST http://localhost:8000/api/tools/find_static_infrastructure \
   -d '{"lat": 37.7749, "lon": -122.4194, "radius_km": 50, "category": "datacenter", "limit": 10}'
 ```
 
-### 7. Upstream Federated Core Tools (30 Tools)
+### 7. `get_active_alerts`
+Retrieves recent tactical alerts, squawk emergencies, disaster triggers, and perimeter tripwire incursions from TimescaleDB:
+```bash
+curl -X POST http://localhost:8000/api/tools/get_active_alerts \
+  -H "Content-Type: application/json" \
+  -d '{"limit": 20}'
+```
+
+### 8. `add_area_of_interest`
+Registers or updates an Area of Interest (AOI) perimeter tripwire (default: Bangalore 75km radius around `12.9716, 77.5946` with VOBL/VOBG filtering):
+```bash
+curl -X POST http://localhost:8000/api/tools/add_area_of_interest \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Bangalore Urban", "lat": 12.9716, "lon": 77.5946, "radius_km": 75.0, "description": "Home AOI"}'
+```
+
+### 9. `test_tactical_alert`
+Simulates and dispatches a tactical alert across all configured channels (Browser HUD banner, macOS desktop notification, Telegram, Discord, and Slack webhooks):
+```bash
+curl -X POST http://localhost:8000/api/tools/test_tactical_alert \
+  -H "Content-Type: application/json" \
+  -d '{"title": "Perimeter Breach Test", "severity": "CRITICAL", "message": "Low altitude contact breached Bangalore perimeter"}'
+```
+
+### 10. Upstream Federated Core Tools (30 Tools)
 `mcp-gateway` automatically discovers and proxies all 30 upstream God's Eye View MCP tools directly:
 - **`situation_brief`**: Unified operational picture (weather, quakes, fires, aircraft, ships, cyclones).
 - **`military_awareness`**: 250km radar perimeter of military aircraft, surface warships, and defense installations.
 - **`show_in_gods_eye_view`**: Live 3D Cesium camera and layer positioning with direct browser links.
 - **`get_earthquakes`**, **`get_weather`**, **`get_weather_radar`**, **`get_flights`**, **`get_ships`**, **`get_satellites`**, **`get_wildfires`**, **`get_air_quality`**, **`get_cctv`**, and more.
 
-All tools can be invoked via standard HTTP `POST /api/tools/{tool_name}` or directly through Claude Desktop / Cursor / Windsurf via MCP.
+All 39 tools can be invoked via standard HTTP `POST /api/tools/{tool_name}` or directly through Claude Desktop / Cursor / Windsurf via MCP.
 
 ---
 

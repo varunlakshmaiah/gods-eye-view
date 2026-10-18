@@ -86,6 +86,8 @@ services:
       - upstream
       - tile38
       - timescaledb
+    volumes:
+      - ./sidecar/config:/app/config
     restart: unless-stopped
 
 volumes:

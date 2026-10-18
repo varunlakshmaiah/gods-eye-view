@@ -21,6 +21,8 @@ from .tools.entity_track import lookup_entity_anchor, get_trajectory
 from .tools.environment import get_environmental_digest
 from .tools.ui_control import execute_cockpit_control
 from .upstream_tools import poll_and_federate, federate_upstream_tools
+from .alerts.dispatcher import dispatcher, TacticalAlert
+from .alerts.engine import tripwire_engine
 
 # ----------------------------------------------------------------------------
 # Lifespan Lifecycle
@@ -31,8 +33,10 @@ async def lifespan(app: FastAPI):
     await router.initialize()
     upstream_url = os.getenv("UPSTREAM_URL", "http://127.0.0.1:4173")
     asyncio.create_task(poll_and_federate(mcp_server, f"{upstream_url}/mcp"))
+    asyncio.create_task(tripwire_engine.start())
     yield
     print("[McpGateway] Closing router connections...")
+    tripwire_engine.stop()
     await router.close()
 
 app = FastAPI(
@@ -85,6 +89,24 @@ class StaticInfraRequest(BaseModel):
     radius_km: float = 50.0
     category: Optional[str] = None
     limit: int = 50
+
+class AddAoiRequest(BaseModel):
+    name: str = Field(..., description="Area name (e.g. 'Bangalore Urban')")
+    lat: float = Field(..., description="Centroid Latitude")
+    lon: float = Field(..., description="Centroid Longitude")
+    radius_km: float = Field(50.0, description="Perimeter radius in kilometers")
+    description: str = Field("", description="Description of the AOI")
+    airports: List[str] = Field(default_factory=list, description="Expected airport codes within AOI to filter out normal landings")
+
+class TestAlertRequest(BaseModel):
+    title: str = Field("Tactical Test Alert", description="Alert title")
+    severity: str = Field("INFO", description="Severity: INFO, LOW, MEDIUM, WARNING, HIGH, CRITICAL")
+    message: str = Field("Test alert from Gods-Eye-View Sentinel", description="Alert body message")
+    category: str = Field("SYSTEM", description="Category: AIRSPACE_INCURSION, SQUAWK_EMERGENCY, CABLE_ANCHOR_DRAG, DISASTER_EARTHQUAKE, SYSTEM")
+    aoi_name: Optional[str] = Field("Bangalore", description="Optional AOI name")
+    entity_id: Optional[str] = Field(None, description="Optional tracked entity ID")
+    lat: Optional[float] = Field(None, description="Optional target latitude")
+    lon: Optional[float] = Field(None, description="Optional target longitude")
 
 # ----------------------------------------------------------------------------
 # Tool Implementation Functions
@@ -250,6 +272,78 @@ async def tool_predict_satellite_passes(
 async def tool_control_visual_cockpit(action: str, params: Dict[str, Any]) -> Dict[str, Any]:
     return await execute_cockpit_control(action, params)
 
+
+async def tool_get_active_alerts(limit: int = 20) -> List[Dict[str, Any]]:
+    """Retrieve recent tactical alerts from database or in-memory ring buffer."""
+    if router.pg_pool:
+        try:
+            async with router.pg_pool.acquire() as conn:
+                rows = await conn.fetch("""
+                    SELECT id, ts, severity, category, title, message, aoi_id, entity_id, lat, lon, metadata
+                    FROM tactical_alerts
+                    ORDER BY ts DESC
+                    LIMIT $1;
+                """, limit)
+                if rows:
+                    return [
+                        {
+                            "id": r["id"],
+                            "timestamp": r["ts"].isoformat() if r["ts"] else "",
+                            "severity": r["severity"],
+                            "category": r["category"],
+                            "title": r["title"],
+                            "message": r["message"],
+                            "aoi_id": r["aoi_id"],
+                            "entity_id": r["entity_id"],
+                            "lat": r["lat"],
+                            "lon": r["lon"],
+                            "metadata": r["metadata"] if isinstance(r["metadata"], dict) else {},
+                        }
+                        for r in rows
+                    ]
+        except Exception as e:
+            print(f"[McpGateway] Error querying tactical_alerts table: {e}")
+    return dispatcher.get_recent_alerts(limit)
+
+
+async def tool_add_area_of_interest(
+    name: str, lat: float, lon: float, radius_km: float = 50.0, description: str = "", airports: Optional[List[str]] = None
+) -> Dict[str, Any]:
+    """Add or update an Area of Interest (AOI) tripwire zone."""
+    return tripwire_engine.add_aoi(name, lat, lon, radius_km, description, airports)
+
+
+async def tool_test_tactical_alert(
+    title: str = "Tactical Test Alert",
+    severity: str = "INFO",
+    message: str = "Test alert from Gods-Eye-View Sentinel",
+    category: str = "SYSTEM",
+    aoi_name: Optional[str] = "Bangalore",
+    entity_id: Optional[str] = None,
+    lat: Optional[float] = None,
+    lon: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Manually dispatch a tactical alert across all enabled channels (HUD, Desktop, Telegram, Discord, Slack, DB)."""
+    import uuid
+    alert = TacticalAlert(
+        id=f"alert_test_{int(datetime.now(timezone.utc).timestamp())}_{uuid.uuid4().hex[:6]}",
+        timestamp=datetime.now(timezone.utc).isoformat(),
+        severity=severity.upper(),
+        category=category,
+        title=title,
+        message=message,
+        aoi_name=aoi_name,
+        entity_id=entity_id,
+        lat=lat if lat is not None else (12.9716 if aoi_name == "Bangalore" else None),
+        lon=lon if lon is not None else (77.5946 if aoi_name == "Bangalore" else None),
+        metadata={"source": "manual_test"}
+    )
+    results = await dispatcher.dispatch(alert)
+    return {
+        "alert": alert.to_dict(),
+        "dispatch_results": results
+    }
+
 # ----------------------------------------------------------------------------
 # REST API Endpoints
 # ----------------------------------------------------------------------------
@@ -290,6 +384,31 @@ async def api_find_static_infrastructure(req: StaticInfraRequest):
     return await router.query_static_infrastructure(
         req.lat, req.lon, req.radius_km, req.category, req.limit
     )
+
+@app.get("/api/alerts/active")
+async def api_get_active_alerts(limit: int = 20):
+    return await tool_get_active_alerts(limit)
+
+@app.post("/api/alerts/test")
+async def api_test_alert(req: TestAlertRequest):
+    return await tool_test_tactical_alert(
+        title=req.title,
+        severity=req.severity,
+        message=req.message,
+        category=req.category,
+        aoi_name=req.aoi_name,
+        entity_id=req.entity_id,
+        lat=req.lat,
+        lon=req.lon,
+    )
+
+@app.get("/api/aois")
+async def api_get_aois():
+    return {"aois": tripwire_engine.get_aois()}
+
+@app.post("/api/aois")
+async def api_add_aoi(req: AddAoiRequest):
+    return tripwire_engine.add_aoi(req.name, req.lat, req.lon, req.radius_km, req.description, req.airports)
 
 @app.get("/api/mcp/tools")
 async def api_list_all_tools():
@@ -383,6 +502,34 @@ async def find_static_infrastructure(
 ) -> str:
     """Query permanently persisted global infrastructure in local PostGIS (datacenters, dams, military bases, submarine cables, landing stations) in sub-milliseconds."""
     res = await router.query_static_infrastructure(lat, lon, radius_km, category, limit)
+    import json
+    return json.dumps(res, indent=2)
+
+@mcp_server.tool()
+async def get_active_alerts(limit: int = 20) -> str:
+    """Retrieve recent tactical alerts and perimeter tripwire triggers from database."""
+    res = await tool_get_active_alerts(limit)
+    import json
+    return json.dumps(res, indent=2)
+
+@mcp_server.tool()
+async def add_area_of_interest(
+    name: str, lat: float, lon: float, radius_km: float = 50.0, description: str = ""
+) -> str:
+    """Register or update an Area of Interest (AOI) perimeter tripwire for real-time threat monitoring."""
+    res = await tool_add_area_of_interest(name, lat, lon, radius_km, description)
+    import json
+    return json.dumps(res, indent=2)
+
+@mcp_server.tool()
+async def test_tactical_alert(
+    title: str = "Tactical Test Alert",
+    severity: str = "INFO",
+    message: str = "Test alert from Gods-Eye-View Sentinel",
+    category: str = "SYSTEM"
+) -> str:
+    """Simulate and dispatch a tactical alert across HUD banners, OS desktop notifications, and webhooks."""
+    res = await tool_test_tactical_alert(title=title, severity=severity, message=message, category=category)
     import json
     return json.dumps(res, indent=2)
 

@@ -1,0 +1,63 @@
+{
+  "aois": [
+    {
+      "id": "aoi_bangalore",
+      "name": "Bangalore",
+      "lat": 12.9716,
+      "lon": 77.5946,
+      "radius_km": 75.0,
+      "description": "Primary Home Tactical Area of Interest (Bengaluru, Karnataka, India)",
+      "airports": ["VOBL", "VOBG"],
+      "enabled": true
+    }
+  ],
+  "eois": [
+    {
+      "id": "eoi_sample",
+      "name": "Sample Watched Flight / Vessel",
+      "identifier": "AIC101",
+      "type": "callsign",
+      "enabled": false
+    }
+  ],
+  "threat_rules": {
+    "emergency_squawks": {
+      "enabled": true,
+      "codes": [
+        "7700",
+        "7600",
+        "7500"
+      ]
+    },
+    "cable_proximity": {
+      "enabled": true,
+      "max_distance_m": 500,
+      "max_speed_kts": 1.0
+    },
+    "disaster_alerts": {
+      "min_earthquake_magnitude": 4.0,
+      "fire_max_distance_km": 50.0
+    }
+  },
+  "notifications": {
+    "browser_hud": {
+      "enabled": true
+    },
+    "desktop_notifications": {
+      "enabled": true
+    },
+    "telegram": {
+      "enabled": false,
+      "bot_token": "",
+      "chat_id": ""
+    },
+    "discord_webhook": {
+      "enabled": false,
+      "webhook_url": ""
+    },
+    "slack_webhook": {
+      "enabled": false,
+      "webhook_url": ""
+    }
+  }
+}

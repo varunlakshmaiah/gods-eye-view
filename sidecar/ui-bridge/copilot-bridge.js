@@ -105,6 +105,8 @@
           const msg = JSON.parse(event.data);
           if (msg.type === 'command') {
             handleCommand(msg);
+          } else if (msg.type === 'tactical_alert') {
+            handleTacticalAlert(msg.alert);
           }
         } catch (err) {
           console.warn('[GodsEyeSidecar] Error parsing message:', err);
@@ -263,6 +265,111 @@
 
     // Update viewport after camera action
     setTimeout(sendViewportUpdate, 500);
+  }
+
+  function handleTacticalAlert(alert) {
+    if (!alert) return;
+    console.warn('%c[TACTICAL ALERT]%c ' + alert.title, 'color: #ff0055; font-weight: bold; background: #220011; padding: 2px 6px;', 'color: inherit;', alert);
+
+    // 1. Request Notification permission if needed and trigger native Desktop Notification
+    if ('Notification' in window) {
+      if (Notification.permission === 'default') {
+        Notification.requestPermission();
+      }
+      if (Notification.permission === 'granted') {
+        try {
+          new Notification(`🚨 ${alert.title}`, {
+            body: alert.message,
+            icon: '/favicon.ico'
+          });
+        } catch (e) {}
+      }
+    }
+
+    // 2. Render Tactical HUD Banner on Cesium Canvas
+    renderAlertBanner(alert);
+  }
+
+  function renderAlertBanner(alert) {
+    const existing = document.getElementById('sidecar-tactical-banner');
+    if (existing) existing.remove();
+
+    const banner = document.createElement('div');
+    banner.id = 'sidecar-tactical-banner';
+    const isCritical = alert.severity === 'CRITICAL';
+    const borderColor = isCritical ? '#ff0055' : '#ffaa00';
+    const bgColor = isCritical ? 'rgba(30, 0, 15, 0.94)' : 'rgba(35, 25, 0, 0.94)';
+
+    banner.style.cssText = `
+      position: fixed;
+      top: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 99999;
+      background: ${bgColor};
+      border: 2px solid ${borderColor};
+      border-radius: 8px;
+      padding: 12px 20px;
+      color: #fff;
+      font-family: monospace, sans-serif;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.8), 0 0 16px ${borderColor};
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      max-width: 650px;
+    `;
+
+    banner.innerHTML = `
+      <div style="font-size: 24px;">🚨</div>
+      <div style="flex: 1;">
+        <div style="font-size: 11px; font-weight: bold; color: ${borderColor}; text-transform: uppercase; letter-spacing: 1px;">
+          ${alert.severity} • ${alert.category}
+        </div>
+        <div style="font-size: 14px; font-weight: bold; margin: 2px 0;">${alert.title}</div>
+        <div style="font-size: 12px; opacity: 0.85;">${alert.message}</div>
+      </div>
+      ${alert.lat && alert.lon ? `
+      <button id="sidecar-fly-btn" style="
+        background: ${borderColor};
+        border: none;
+        color: #000;
+        font-weight: bold;
+        padding: 6px 12px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 11px;
+        text-transform: uppercase;
+      ">FLY TO TARGET</button>` : ''}
+      <button id="sidecar-close-btn" style="
+        background: transparent;
+        border: none;
+        color: #fff;
+        font-size: 16px;
+        cursor: pointer;
+        opacity: 0.7;
+      ">✕</button>
+    `;
+
+    document.body.appendChild(banner);
+
+    const closeBtn = document.getElementById('sidecar-close-btn');
+    if (closeBtn) closeBtn.onclick = () => banner.remove();
+
+    const flyBtn = document.getElementById('sidecar-fly-btn');
+    if (flyBtn) {
+      flyBtn.onclick = () => {
+        handleCommand({
+          action: 'fly_to_coordinate',
+          params: { lat: alert.lat, lon: alert.lon, altitude_m: 12000, duration: 2.5 }
+        });
+        banner.remove();
+      };
+    }
+
+    // Auto-dismiss after 15 seconds
+    setTimeout(() => {
+      if (banner.parentElement) banner.remove();
+    }, 15000);
   }
 
   // Periodic heartbeat reporting camera changes

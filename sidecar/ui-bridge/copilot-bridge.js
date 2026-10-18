@@ -1137,7 +1137,7 @@
     }
 
     for (const dev of cachedEscortDevices) {
-      if (dev.lat === undefined || dev.lon === undefined) continue;
+      if (dev.lat === undefined || dev.lon === undefined || (dev.lat === 0 && dev.lon === 0)) continue;
       const radiusKm = dev.bubble_radius_km || 15.0;
       const radiusMeters = radiusKm * 1000.0;
       const status = (dev.status || 'SAFE').toUpperCase();
@@ -1598,28 +1598,31 @@
       const nameStr = (dev.name || '').toLowerCase();
       const icon = (typeStr.includes('vehicle') || nameStr.includes('suv') || nameStr.includes('car') || nameStr.includes('convoy') || nameStr.includes('veh')) ? '🚙' : '👤';
 
+      const hasFix = dev.lat && dev.lon && (dev.lat !== 0 || dev.lon !== 0);
+      const coordStr = hasFix ? `${dev.lat.toFixed(4)}, ${dev.lon.toFixed(4)}` : 'Awaiting GPS Fix';
+
       html += `
         <div style="margin-bottom: 8px; padding: 8px; background: rgba(255,255,255,0.05); border: 1px solid ${color}55; border-radius: 6px; display: flex; align-items: center; justify-content: space-between; gap: 6px;">
           <div style="flex: 1; min-width: 0;">
             <div style="font-size: 11px; font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
               ${icon} ${dev.name}
             </div>
-            <div style="font-size: 10px; color: ${color}; margin-top: 2px;">
-              ● ${dev.status || 'SAFE'} • ${dev.bubble_radius_km || 15}km bubble
+            <div style="font-size: 10px; color: ${hasFix ? color : '#ffaa00'}; margin-top: 2px;">
+              ● ${hasFix ? dev.status || 'SAFE' : 'SEARCHING GPS'} • ${coordStr}
             </div>
           </div>
-          <button class="sidecar-hud-fly-btn" data-id="${dev.device_id}" data-color="${color}" style="
-            background: ${color};
+          <button class="sidecar-hud-fly-btn" data-id="${dev.device_id}" data-color="${color}" ${hasFix ? '' : 'disabled style="opacity: 0.5; background: #666; cursor: not-allowed;"'} style="
+            background: ${hasFix ? color : '#555'};
             border: none;
             color: #000;
             font-weight: bold;
             font-size: 10px;
             padding: 5px 8px;
             border-radius: 4px;
-            cursor: pointer;
+            cursor: ${hasFix ? 'pointer' : 'not-allowed'};
             letter-spacing: 0.5px;
             white-space: nowrap;
-          ">FLY TO</button>
+          ">${hasFix ? 'FLY TO' : 'WAITING'}</button>
           <button class="sidecar-hud-untag-btn" data-id="${dev.device_id}" style="
             background: rgba(255, 51, 102, 0.2);
             border: 1px solid #ff3366;

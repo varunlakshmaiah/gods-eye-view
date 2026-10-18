@@ -293,14 +293,15 @@
       } catch (err) {}
     }
 
-    async function registerAsset(deviceId, name, type, radius) {
+    async function registerAsset(deviceId, name, type, radius, lat, lon) {
+      if (!lat && !lon) return; // Wait for real coordinates
       try {
         const payload = {
           device_id: deviceId,
           name: name,
           device_type: type,
-          lat: 0,
-          lon: 0,
+          lat: lat,
+          lon: lon,
           alt_m: 0,
           bubble_radius_km: Number(radius) || 15.0,
           source: 'android_beacon'
@@ -310,10 +311,8 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
         });
-        log(`Guardian bubble registered (${radius}km perimeter)`);
-      } catch (e) {
-        log(`Notice: initial registration via ping`);
-      }
+        log(`Guardian bubble active (${radius}km perimeter at ${lat.toFixed(4)}, ${lon.toFixed(4)})`);
+      } catch (e) {}
     }
 
     async function transmitPing(pos) {
@@ -322,6 +321,9 @@
       lastPingTime = now;
 
       const deviceId = document.getElementById('device-id').value.trim() || 'VIP-ANDROID-1';
+      const name = document.getElementById('asset-name').value.trim() || 'VIP Android Phone';
+      const type = document.getElementById('asset-type').value;
+      const radius = document.getElementById('bubble-radius').value || 15;
       const lat = pos.coords.latitude;
       const lon = pos.coords.longitude;
       const acc = pos.coords.accuracy || 0;
@@ -338,6 +340,10 @@
       document.getElementById('val-speed').textContent = `${speedKts.toFixed(1)} kts (${(speedMps * 3.6).toFixed(1)} km/h)`;
       document.getElementById('val-heading').textContent = heading ? `${Math.round(heading)}°` : '--°';
       document.getElementById('val-alt').textContent = `${Math.round(alt)} m`;
+
+      if (pingsSent === 0) {
+        await registerAsset(deviceId, name, type, radius, lat, lon);
+      }
 
       try {
         const payload = {
@@ -359,7 +365,7 @@
         if (res.ok) {
           pingsSent++;
           pingCounter.textContent = `${pingsSent} PINGS SENT`;
-          log(`${isSimulating ? '🧪 Sim' : '📡 GPS'} ping #${pingsSent} sent (${lat.toFixed(5)}, ${lon.toFixed(5)}) speed: ${speedKts.toFixed(1)}kts`);
+          log(`${isSimulating ? '🧪 Sim' : '📡 GPS'} ping #${pingsSent} (${lat.toFixed(5)}, ${lon.toFixed(5)}) acc: ±${Math.round(acc)}m`);
         } else {
           log(`Ping failed: HTTP ${res.status}`);
         }
@@ -382,11 +388,6 @@
         return;
       }
 
-      const deviceId = document.getElementById('device-id').value.trim() || 'VIP-ANDROID-1';
-      const name = document.getElementById('asset-name').value.trim() || 'VIP Android Phone';
-      const type = document.getElementById('asset-type').value;
-      const radius = document.getElementById('bubble-radius').value || 15;
-
       isTransmitting = true;
       toggleBtn.className = 'btn btn-stop';
       toggleBtn.innerHTML = '<span>⏹️</span> STOP TRANSMITTING';
@@ -394,34 +395,40 @@
       badge.textContent = 'TRANSMITTING';
       telCard.style.display = 'block';
 
-      log('Requesting GPS permission & high-accuracy fix...');
+      log('Acquiring location fix (network + GPS)...');
       await requestWakeLock();
-      await registerAsset(deviceId, name, type, radius);
 
-      // Trigger initial prompt via getCurrentPosition
+      // Stage 1: Instant network/Wi-Fi fix (0.5s response)
       navigator.geolocation.getCurrentPosition(
         (pos) => {
-          log('✅ GPS fix acquired!');
+          log('✅ Location fix acquired!');
           transmitPing(pos);
         },
-        (err) => {
-          handleGpsError(err);
-        },
-        { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 }
+        () => {},
+        { enableHighAccuracy: false, timeout: 5000, maximumAge: 60000 }
       );
 
-      // Continuous tracking watch
+      // Stage 2: Continuous high-accuracy satellite tracking
       watchId = navigator.geolocation.watchPosition(
         (pos) => {
           transmitPing(pos);
         },
         (err) => {
-          handleGpsError(err);
+          if (err.code === 3 && pingsSent === 0) {
+            log('GPS satellite slow; requesting cell/Wi-Fi fix...');
+            navigator.geolocation.getCurrentPosition(
+              (p) => transmitPing(p),
+              (e) => handleGpsError(e),
+              { enableHighAccuracy: false, timeout: 8000 }
+            );
+          } else {
+            handleGpsError(err);
+          }
         },
         {
           enableHighAccuracy: true,
-          maximumAge: 2000,
-          timeout: 15000
+          maximumAge: 3000,
+          timeout: 25000
         }
       );
     }

@@ -735,7 +735,7 @@ async def api_get_escort_device(device_id: str):
 
 @app.post("/api/escort/tag")
 async def api_tag_escort_device(req: EscortTagRequest):
-    return escort_engine.tag_device(
+    res = escort_engine.tag_device(
         device_id=req.device_id,
         name=req.name,
         device_type=req.device_type or "person",
@@ -745,10 +745,12 @@ async def api_tag_escort_device(req: EscortTagRequest):
         bubble_radius_km=req.bubble_radius_km,
         source=req.source or "api",
     )
+    await hub.broadcast_json({"type": "escort_sync", "devices": escort_engine.list_devices()})
+    return res
 
 @app.post("/api/escort/ping")
 async def api_ping_escort_location(req: EscortPingRequest):
-    return escort_engine.update_location(
+    res = escort_engine.update_location(
         device_id=req.device_id,
         lat=req.lat,
         lon=req.lon,
@@ -757,6 +759,8 @@ async def api_ping_escort_location(req: EscortPingRequest):
         heading_deg=req.heading_deg or 0.0,
         source=req.source or "mobile_ping",
     )
+    await hub.broadcast_json({"type": "escort_sync", "devices": escort_engine.list_devices()})
+    return res
 
 @app.post("/api/escort/query")
 async def api_query_relative_to_escort(req: EscortQueryRequest):
@@ -780,6 +784,7 @@ async def api_evaluate_escort_route(req: EscortRouteRequest):
 @app.delete("/api/escort/device/{device_id}")
 async def api_delete_escort_device(device_id: str):
     success = escort_engine.remove_device(device_id)
+    await hub.broadcast_json({"type": "escort_sync", "devices": escort_engine.list_devices()})
     return {"status": "removed" if success else "not_found", "device_id": device_id}
 
 @app.get("/api/mcp/tools")
@@ -1215,6 +1220,7 @@ async def tag_escort_device(
         bubble_radius_km=bubble_radius_km,
         source="mcp_tool",
     )
+    await hub.broadcast_json({"type": "escort_sync", "devices": escort_engine.list_devices()})
     import json
     return json.dumps(res, indent=2)
 
@@ -1237,6 +1243,7 @@ async def update_escort_location(
         heading_deg=heading_deg,
         source="mcp_update",
     )
+    await hub.broadcast_json({"type": "escort_sync", "devices": escort_engine.list_devices()})
     import json
     return json.dumps(res, indent=2)
 

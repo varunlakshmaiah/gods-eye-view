@@ -109,6 +109,8 @@
             handleTacticalAlert(msg.alert);
           } else if (msg.type === 'aoi_sync') {
             renderAois(msg.aois);
+          } else if (msg.type === 'escort_sync') {
+            renderEscortBubbles(msg.devices);
           }
         } catch (err) {
           console.warn('[GodsEyeSidecar] Error parsing message:', err);
@@ -283,6 +285,49 @@
             result = { visible: radarDataSource.show };
           } else {
             result = { visible: false, message: 'Radar data source not initialized yet' };
+          }
+          break;
+        }
+
+        case 'toggle_escort_visuals': {
+          const { visible } = params;
+          if (escortDataSource) {
+            escortDataSource.show = visible !== undefined ? Boolean(visible) : !escortDataSource.show;
+            gev?.requestRender?.('escort-visibility-toggle');
+            viewer.scene?.requestRender?.();
+            result = { visible: escortDataSource.show };
+          } else {
+            result = { visible: false, message: 'Escort data source not initialized yet' };
+          }
+          break;
+        }
+
+        case 'refresh_escorts': {
+          await syncEscortVisuals();
+          result = { refreshed: true, device_count: cachedEscortDevices.length };
+          break;
+        }
+
+        case 'fly_to_escort': {
+          const { device_id } = params;
+          const target = cachedEscortDevices.find(d => 
+            d.device_id === device_id || 
+            (d.name && d.name.toLowerCase().includes((device_id || '').toLowerCase()))
+          );
+          if (target && target.lat !== undefined && target.lon !== undefined) {
+            const altM = Math.max(6000, (target.bubble_radius_km || 25) * 1500);
+            await handleCommand({
+              action: 'fly_to_coordinate',
+              params: {
+                lat: target.lat,
+                lon: target.lon,
+                altitude_m: altM,
+                duration_s: 2.5
+              }
+            });
+            result = { flying_to: target.device_id, name: target.name, lat: target.lat, lon: target.lon };
+          } else {
+            result = { error: `Escort device '${device_id}' not found in active cache` };
           }
           break;
         }
@@ -645,6 +690,152 @@
     } catch (e) {}
   }
 
+  let escortDataSource = null;
+  let cachedEscortDevices = [];
+
+  async function renderEscortBubbles(devices) {
+    if (devices && Array.isArray(devices)) {
+      cachedEscortDevices = devices;
+    }
+    const viewer = await waitForViewer(12000);
+    const { gev } = getCesiumGlobals();
+    const Cesium = window.Cesium;
+    if (!viewer || !Cesium) return;
+
+    if (!escortDataSource) {
+      if (Cesium.CustomDataSource) {
+        escortDataSource = new Cesium.CustomDataSource('sidecar-escort-bubbles');
+        viewer.dataSources.add(escortDataSource);
+      }
+    }
+
+    const entityTarget = escortDataSource ? escortDataSource.entities : viewer.entities;
+    if (escortDataSource) {
+      escortDataSource.entities.removeAll();
+    }
+
+    for (const dev of cachedEscortDevices) {
+      if (dev.lat === undefined || dev.lon === undefined) continue;
+      const radiusKm = dev.bubble_radius_km || 25.0;
+      const radiusMeters = radiusKm * 1000.0;
+      const center = Cesium.Cartesian3.fromDegrees(dev.lon, dev.lat, dev.altitude_m || 0);
+      const groundCenter = Cesium.Cartesian3.fromDegrees(dev.lon, dev.lat, 0);
+
+      // Status color scheme: SAFE (emerald neon), ADVISORY (tactical amber), ALERT (crimson red)
+      const status = (dev.status || 'SAFE').toUpperCase();
+      let statusColorHex = '#00ff88';
+      let fillRgba = 'rgba(0, 255, 136, 0.08)';
+      let statusBadge = '🛡️ SAFE';
+
+      if (status === 'ALERT') {
+        statusColorHex = '#ff3366';
+        fillRgba = 'rgba(255, 51, 102, 0.15)';
+        statusBadge = '🚨 CRITICAL ALERT';
+      } else if (status === 'ADVISORY') {
+        statusColorHex = '#ffaa00';
+        fillRgba = 'rgba(255, 170, 0, 0.12)';
+        statusBadge = '⚠️ ADVISORY';
+      }
+
+      // Tactical icon
+      const typeStr = (dev.device_type || '').toLowerCase();
+      const nameStr = (dev.name || '').toLowerCase();
+      let icon = '👤';
+      if (typeStr.includes('vehicle') || nameStr.includes('car') || nameStr.includes('convoy') || nameStr.includes('suv') || nameStr.includes('truck')) {
+        icon = '🚙';
+      } else if (typeStr.includes('drone') || typeStr.includes('uav')) {
+        icon = '🛸';
+      } else if (typeStr.includes('vessel') || typeStr.includes('boat')) {
+        icon = '🚤';
+      } else if (typeStr.includes('vip')) {
+        icon = '👑';
+      }
+
+      // 1. Outer Dynamic Guardian Bubble (Translucent glowing geosphere boundary)
+      entityTarget.add({
+        id: `escort_bubble_${dev.device_id}`,
+        name: `Guardian Bubble: ${dev.name}`,
+        position: groundCenter,
+        ellipse: {
+          semiMinorAxis: radiusMeters,
+          semiMajorAxis: radiusMeters,
+          material: Cesium.Color.fromCssColorString(fillRgba),
+          outline: true,
+          outlineColor: Cesium.Color.fromCssColorString(statusColorHex),
+          outlineWidth: 2,
+          height: 0,
+        },
+      });
+
+      // 2. Tactical Inner Threat Buffer Ring (5km proximity zone)
+      const innerBufferMeters = Math.min(5000.0, radiusMeters * 0.35);
+      entityTarget.add({
+        id: `escort_inner_${dev.device_id}`,
+        position: groundCenter,
+        ellipse: {
+          semiMinorAxis: innerBufferMeters,
+          semiMajorAxis: innerBufferMeters,
+          material: Cesium.Color.TRANSPARENT,
+          outline: true,
+          outlineColor: Cesium.Color.fromCssColorString(statusColorHex).withAlpha(0.35),
+          outlineWidth: 1,
+          height: 0,
+        },
+      });
+
+      // 3. Center Entity Point Marker
+      entityTarget.add({
+        id: `escort_point_${dev.device_id}`,
+        position: center,
+        point: {
+          pixelSize: 12,
+          color: Cesium.Color.fromCssColorString(statusColorHex),
+          outlineColor: Cesium.Color.BLACK,
+          outlineWidth: 2,
+        },
+      });
+
+      // 4. Center Tactical HUD Badge Label
+      const threatCount = dev.threat_count || (dev.active_threats ? dev.active_threats.length : 0);
+      entityTarget.add({
+        id: `escort_label_${dev.device_id}`,
+        position: center,
+        label: {
+          text: `${icon} ${dev.name.toUpperCase()} [${radiusKm}km BUBBLE]\nStatus: ${statusBadge} | Threats: ${threatCount}\nPos: ${dev.lat.toFixed(4)}, ${dev.lon.toFixed(4)}`,
+          font: 'bold 11px monospace',
+          fillColor: Cesium.Color.fromCssColorString(statusColorHex),
+          outlineColor: Cesium.Color.BLACK,
+          outlineWidth: 3,
+          style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+          verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+          pixelOffset: new Cesium.Cartesian2(0, -16),
+          distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 6000000),
+        },
+      });
+    }
+
+    gev?.requestRender?.('escort-bubbles-rendered');
+    viewer.scene?.requestRender?.();
+    console.log(`%c[GodsEyeSidecar]%c Rendered ${cachedEscortDevices.length} Escort Guardian Bubble(s) in 3D Cesium.`, 'color: #00ff88; font-weight: bold;', 'color: inherit;');
+  }
+
+  async function syncEscortVisuals() {
+    try {
+      const res = await fetch('http://localhost:8000/api/escort/devices');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.devices) {
+          renderEscortBubbles(data.devices);
+        }
+      }
+    } catch (e) {}
+  }
+
+  // Periodic polling for dynamic moving bubbles
+  setInterval(() => {
+    syncEscortVisuals();
+  }, 5000);
+
   // Periodic heartbeat reporting camera changes
   setInterval(() => {
     sendViewportUpdate();
@@ -656,10 +847,12 @@
       connect();
       syncAoiVisuals();
       syncRadarVisuals();
+      syncEscortVisuals();
     });
   } else {
     connect();
     syncAoiVisuals();
     syncRadarVisuals();
+    syncEscortVisuals();
   }
 })();

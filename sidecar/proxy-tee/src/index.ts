@@ -83,6 +83,9 @@ app.get('/__sidecar/copilot-bridge.js', (_req: Request, res: Response) => {
   for (const p of possiblePaths) {
     if (fs.existsSync(p)) {
       res.setHeader('Content-Type', 'application/javascript');
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
       res.sendFile(p);
       return;
     }
@@ -106,6 +109,28 @@ app.use(async (req: Request, res: Response, next: NextFunction) => {
     } catch (e: any) {
       console.warn(`[ProxyTee] Playback handler error: ${e.message}`);
     }
+  }
+  next();
+});
+
+// ----------------------------------------------------------------------------
+// 2.5 Gateway Proxy for Sidecar APIs (Escort, AOIs, Radar)
+// ----------------------------------------------------------------------------
+const GATEWAY_URL = process.env.GATEWAY_URL || 'http://upstream:8000';
+const gatewayProxy = createProxyMiddleware({
+  target: GATEWAY_URL,
+  changeOrigin: true,
+  ws: true,
+});
+
+app.use((req: Request, res: Response, next: NextFunction) => {
+  if (
+    req.path.startsWith('/api/escort') ||
+    req.path.startsWith('/api/aois') ||
+    req.path.startsWith('/api/radar') ||
+    req.path.startsWith('/ws/copilot')
+  ) {
+    return gatewayProxy(req, res, next);
   }
   next();
 });

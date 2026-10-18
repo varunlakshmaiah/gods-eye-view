@@ -521,6 +521,16 @@ class PersonalEscortEngine:
                             # Async dispatch
                             await dispatcher.dispatch(alert)
 
+                # Broadcast live escort status to all connected browser Cesium maps
+                try:
+                    from ..ws_copilot import hub
+                    await hub.broadcast_json({
+                        "type": "escort_sync",
+                        "devices": self.list_devices()
+                    })
+                except Exception:
+                    pass
+
                 await asyncio.sleep(self.scan_interval_sec)
             except asyncio.CancelledError:
                 break

@@ -20,11 +20,73 @@
     return (radians * 180.0) / Math.PI;
   }
 
+  function resolveCesium(viewer) {
+    if (window.Cesium && window.Cesium.Cartesian3) return window.Cesium;
+
+    const Cartesian3 = viewer?.camera?.position?.constructor;
+    const Color = viewer?.scene?.backgroundColor?.constructor;
+    const Ellipsoid = viewer?.scene?.globe?.ellipsoid?.constructor;
+
+    const shim = {
+      Cartesian3,
+      Color,
+      Ellipsoid,
+      HeightReference: {
+        NONE: 0,
+        CLAMP_TO_GROUND: 1,
+        RELATIVE_TO_GROUND: 2,
+      },
+      ClassificationType: {
+        TERRAIN: 0,
+        CESIUM_3D_TILE: 1,
+        BOTH: 2,
+      },
+      LabelStyle: {
+        FILL: 0,
+        OUTLINE: 1,
+        FILL_AND_OUTLINE: 2,
+      },
+      VerticalOrigin: {
+        CENTER: 0,
+        BOTTOM: 1,
+        BASELINE: 2,
+        TOP: -1,
+      },
+      DistanceDisplayCondition: function (near, far) {
+        this.near = near;
+        this.far = far;
+      },
+      PolygonHierarchy: function (positions) {
+        this.positions = positions;
+        this.holes = [];
+      },
+      ColorMaterialProperty: function (color) {
+        this.color = color;
+      },
+      Cartesian2: function (x, y) {
+        this.x = x;
+        this.y = y;
+      },
+      Math: {
+        toRadians: (deg) => (deg * Math.PI) / 180.0,
+        toDegrees: (rad) => (rad * 180.0) / Math.PI,
+        PI_OVER_TWO: Math.PI / 2.0,
+      },
+    };
+
+    try {
+      window.Cesium = shim;
+    } catch (e) {}
+
+    return shim;
+  }
+
   function getCesiumGlobals() {
     const gev = window.__godsEyeView;
     const viewer = gev?.viewer || window.viewer;
-    const Cartesian3 = window.Cesium?.Cartesian3 || viewer?.camera?.position?.constructor;
-    return { gev, viewer, Cartesian3 };
+    const Cesium = resolveCesium(viewer);
+    const Cartesian3 = Cesium?.Cartesian3;
+    return { gev, viewer, Cesium, Cartesian3 };
   }
 
   async function waitForViewer(timeoutMs = 15000) {
@@ -735,10 +797,12 @@
     if (devices && Array.isArray(devices)) {
       cachedEscortDevices = devices;
     }
+    // 1. Immediately render on-screen HUD (zero Cesium dependency)
+    renderEscortHud(cachedEscortDevices);
+
     const viewer = await waitForViewer(12000);
-    const { gev } = getCesiumGlobals();
-    const Cesium = window.Cesium;
-    if (!viewer || !Cesium) return;
+    const { gev, Cesium } = getCesiumGlobals();
+    if (!viewer) return;
 
     // Clear existing escort entities directly on viewer.entities
     if (viewer.entities) {
@@ -797,7 +861,7 @@
             positions: outerPositions,
             clampToGround: true,
             width: 4,
-            material: new Cesium.ColorMaterialProperty(Cesium.Color.fromCssColorString(statusColorHex)),
+            material: Cesium.Color?.fromCssColorString ? Cesium.Color.fromCssColorString(statusColorHex) : statusColorHex,
           },
         });
 
@@ -806,9 +870,9 @@
           id: `${ESCORT_PREFIX}fill_${dev.device_id}`,
           name: `Guardian Fill: ${dev.name}`,
           polygon: {
-            hierarchy: new Cesium.PolygonHierarchy(outerPositions),
-            material: new Cesium.ColorMaterialProperty(Cesium.Color.fromCssColorString(fillRgba)),
-            classificationType: Cesium.ClassificationType ? Cesium.ClassificationType.BOTH : undefined,
+            hierarchy: outerPositions,
+            material: Cesium.Color?.fromCssColorString ? Cesium.Color.fromCssColorString(fillRgba) : fillRgba,
+            classificationType: Cesium.ClassificationType?.BOTH ?? 2,
           },
         });
       }
@@ -823,7 +887,7 @@
             positions: innerPositions,
             clampToGround: true,
             width: 2,
-            material: new Cesium.ColorMaterialProperty(Cesium.Color.fromCssColorString(statusColorHex).withAlpha(0.6)),
+            material: Cesium.Color?.fromCssColorString ? Cesium.Color.fromCssColorString(statusColorHex).withAlpha(0.6) : statusColorHex,
           },
         });
       }
@@ -837,7 +901,7 @@
             Cesium.Cartesian3.fromDegrees(dev.lon, dev.lat, 4000),
           ],
           width: 3,
-          material: new Cesium.ColorMaterialProperty(Cesium.Color.fromCssColorString(statusColorHex).withAlpha(0.85)),
+          material: Cesium.Color?.fromCssColorString ? Cesium.Color.fromCssColorString(statusColorHex).withAlpha(0.85) : statusColorHex,
         },
       });
 
@@ -847,10 +911,10 @@
         position: center,
         point: {
           pixelSize: 16,
-          color: Cesium.Color.fromCssColorString(statusColorHex),
-          outlineColor: Cesium.Color.BLACK,
+          color: Cesium.Color?.fromCssColorString ? Cesium.Color.fromCssColorString(statusColorHex) : statusColorHex,
+          outlineColor: Cesium.Color?.BLACK || '#000000',
           outlineWidth: 3,
-          heightReference: Cesium.HeightReference ? Cesium.HeightReference.CLAMP_TO_GROUND : undefined,
+          heightReference: Cesium.HeightReference?.CLAMP_TO_GROUND ?? 1,
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
       });
@@ -863,13 +927,13 @@
         label: {
           text: `${icon} ${dev.name.toUpperCase()} [${radiusKm}km BUBBLE]\nStatus: ${statusBadge} | Threats: ${threatCount}\nPos: ${dev.lat.toFixed(4)}, ${dev.lon.toFixed(4)}`,
           font: 'bold 13px monospace',
-          fillColor: Cesium.Color.fromCssColorString(statusColorHex),
-          outlineColor: Cesium.Color.BLACK,
+          fillColor: Cesium.Color?.fromCssColorString ? Cesium.Color.fromCssColorString(statusColorHex) : statusColorHex,
+          outlineColor: Cesium.Color?.BLACK || '#000000',
           outlineWidth: 4,
-          style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-          verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+          style: Cesium.LabelStyle?.FILL_AND_OUTLINE ?? 2,
+          verticalOrigin: Cesium.VerticalOrigin?.BOTTOM ?? 1,
           pixelOffset: new Cesium.Cartesian2(0, -22),
-          heightReference: Cesium.HeightReference ? Cesium.HeightReference.CLAMP_TO_GROUND : undefined,
+          heightReference: Cesium.HeightReference?.CLAMP_TO_GROUND ?? 1,
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
           distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 10000000),
         },
@@ -880,6 +944,22 @@
     viewer.scene?.requestRender?.();
     renderEscortHud(cachedEscortDevices);
     console.log(`%c[GodsEyeSidecar]%c Rendered ${cachedEscortDevices.length} Escort Guardian Bubble(s) directly on viewer.entities.`, 'color: #00ff88; font-weight: bold;', 'color: inherit;');
+  }
+
+  async function syncEscortVisuals() {
+    try {
+      const host = window.location.hostname || 'localhost';
+      let res = await fetch('/api/escort/devices').catch(() => null);
+      if (!res || !res.ok) {
+        res = await fetch(`http://${host}:8000/api/escort/devices`).catch(() => null);
+      }
+      if (res && res.ok) {
+        const data = await res.json();
+        if (data.devices) {
+          renderEscortBubbles(data.devices);
+        }
+      }
+    } catch (e) {}
   }
 
   function renderEscortHud(devices) {

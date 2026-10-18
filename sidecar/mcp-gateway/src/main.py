@@ -823,6 +823,14 @@ async def websocket_copilot_endpoint(websocket: WebSocket):
             "type": "aoi_sync",
             "aois": tripwire_engine.get_aois()
         }))
+        await websocket.send_text(json.dumps({
+            "type": "escort_sync",
+            "devices": escort_engine.list_devices()
+        }))
+        await websocket.send_text(json.dumps({
+            "type": "radar_sync",
+            "stations": radar_engine.get_stations()
+        }))
     except Exception:
         pass
     try:

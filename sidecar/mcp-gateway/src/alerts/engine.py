@@ -15,6 +15,7 @@ from typing import Dict, Any, List, Optional, Set
 
 from .dispatcher import dispatcher, TacticalAlert
 from ..router import router
+from ..kinematics.cpa import scan_airspace_conflicts
 
 
 def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -206,6 +207,60 @@ class TripwireEngine:
                         """, aoi_id)
             except Exception:
                 pass
+
+        # --------------------------------------------------------------------
+        # 4. Kinematic CPA / Airspace Separation Conflicts
+        # --------------------------------------------------------------------
+        if router.redis:
+            for aoi in self._config.get("aois", []):
+                if not aoi.get("enabled", True):
+                    continue
+                try:
+                    conflicts = await scan_airspace_conflicts(
+                        redis_client=router.redis,
+                        lat=aoi["lat"],
+                        lon=aoi["lon"],
+                        radius_km=aoi.get("radius_km", 75.0),
+                        min_cpa_km=4.0,
+                        max_tcpa_min=10.0,
+                        max_vert_sep_m=300.0,
+                        aois=[aoi],
+                    )
+                    # Check for pairwise conflicts
+                    for conf in conflicts.get("pairwise_conflicts", []):
+                        pair_key = f"cpa_{conf['entity_a']}_{conf['entity_b']}"
+                        if not self._is_on_cooldown(pair_key):
+                            alert = TacticalAlert(
+                                severity=conf["severity"],
+                                category="KINEMATIC_COLLISION_ALERT",
+                                title=f"Airspace Conflict: {conf['entity_a']} ↔ {conf['entity_b']}",
+                                message=f"Predicted CPA: {conf['cpa_distance_km']}km ({conf['cpa_vertical_separation_m']}m vert) in {conf['tcpa_minutes']} min. Closing speed: {conf['closing_speed_kts']} kts.",
+                                aoi_name=aoi["name"],
+                                lat=conf["conflict_lat"],
+                                lon=conf["conflict_lon"],
+                                metadata=conf
+                            )
+                            asyncio.create_task(dispatcher.dispatch(alert))
+
+                    # Check for inbound AOI penetrations
+                    for penetrator in conflicts.get("aoi_intercepts", []):
+                        inbound_key = f"inbound_{aoi['id']}_{penetrator['entity_id']}"
+                        if not self._is_on_cooldown(inbound_key):
+                            alert = TacticalAlert(
+                                severity="INFO",
+                                category="AOI_INTERCEPT_PREDICTION",
+                                title=f"Inbound Contact Intercepting {aoi['name']}",
+                                message=f"Contact {penetrator['entity_id']} on intercept course to {aoi['name']} perimeter. Estimated entry in {penetrator['time_to_entry_minutes']} min (Closing at {penetrator['closing_speed_kts']} kts).",
+                                aoi_name=aoi["name"],
+                                aoi_id=aoi["id"],
+                                entity_id=penetrator["entity_id"],
+                                lat=aoi["lat"],
+                                lon=aoi["lon"],
+                                metadata=penetrator
+                            )
+                            asyncio.create_task(dispatcher.dispatch(alert))
+                except Exception as e:
+                    pass
 
     async def start(self):
         """Background continuous evaluation loop."""

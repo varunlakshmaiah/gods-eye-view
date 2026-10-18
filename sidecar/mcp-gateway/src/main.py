@@ -24,6 +24,7 @@ from .upstream_tools import poll_and_federate, federate_upstream_tools
 from .alerts.dispatcher import dispatcher, TacticalAlert
 from .alerts.engine import tripwire_engine
 from .intsum.engine import intsum_engine
+from .kinematics.cpa import calculate_pairwise_cpa, calculate_aoi_intercept, scan_airspace_conflicts
 
 # ----------------------------------------------------------------------------
 # Lifespan Lifecycle
@@ -119,6 +120,17 @@ class TestAlertRequest(BaseModel):
     entity_id: Optional[str] = Field(None, description="Optional tracked entity ID")
     lat: Optional[float] = Field(None, description="Optional target latitude")
     lon: Optional[float] = Field(None, description="Optional target longitude")
+
+class CpaRequest(BaseModel):
+    entity_a_id: str = Field(..., description="First contact ID or callsign")
+    entity_b_id: str = Field(..., description="Second contact ID or callsign")
+
+class ScanConflictsRequest(BaseModel):
+    lat: float = Field(..., description="Center latitude for radar scan")
+    lon: float = Field(..., description="Center longitude for radar scan")
+    radius_km: float = Field(100.0, description="Scan radius in km")
+    min_cpa_km: float = Field(5.0, description="Minimum separation threshold in km")
+    max_tcpa_min: float = Field(15.0, description="Maximum lookahead time in minutes")
 
 # ----------------------------------------------------------------------------
 # Tool Implementation Functions
@@ -356,6 +368,48 @@ async def tool_test_tactical_alert(
         "dispatch_results": results
     }
 
+
+async def tool_calculate_pairwise_cpa(entity_a_id: str, entity_b_id: str) -> Dict[str, Any]:
+    """Look up both entities from Tile38 / router and compute 4D CPA / TCPA."""
+    anchor_a = await lookup_entity_anchor(entity_a_id)
+    anchor_b = await lookup_entity_anchor(entity_b_id)
+    if not anchor_a or not anchor_b:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Could not resolve both entities: '{entity_a_id}' found: {bool(anchor_a)}, '{entity_b_id}' found: {bool(anchor_b)}"
+        )
+    
+    speed_a = anchor_a.get("speed_kts", 0.0)
+    hdg_a = anchor_a.get("heading_deg", 0.0)
+    speed_b = anchor_b.get("speed_kts", 0.0)
+    hdg_b = anchor_b.get("heading_deg", 0.0)
+    
+    res = calculate_pairwise_cpa(
+        lat_a=anchor_a["lat"], lon_a=anchor_a["lon"], alt_m_a=anchor_a.get("altitude_m", 0.0),
+        speed_kts_a=speed_a, heading_deg_a=hdg_a,
+        lat_b=anchor_b["lat"], lon_b=anchor_b["lon"], alt_m_b=anchor_b.get("altitude_m", 0.0),
+        speed_kts_b=speed_b, heading_deg_b=hdg_b,
+    )
+    res["entity_a"] = {"id": entity_a_id, "lat": anchor_a["lat"], "lon": anchor_a["lon"], "alt_m": anchor_a.get("altitude_m", 0.0), "speed_kts": speed_a, "heading": hdg_a}
+    res["entity_b"] = {"id": entity_b_id, "lat": anchor_b["lat"], "lon": anchor_b["lon"], "alt_m": anchor_b.get("altitude_m", 0.0), "speed_kts": speed_b, "heading": hdg_b}
+    return res
+
+
+async def tool_scan_proximity_conflicts(
+    lat: float, lon: float, radius_km: float = 100.0, min_cpa_km: float = 5.0, max_tcpa_min: float = 15.0
+) -> Dict[str, Any]:
+    """Scan local airspace for converging collision hazards and AOI perimeter intercepts."""
+    aois = tripwire_engine.get_aois()
+    return await scan_airspace_conflicts(
+        redis_client=router.redis,
+        lat=lat,
+        lon=lon,
+        radius_km=radius_km,
+        min_cpa_km=min_cpa_km,
+        max_tcpa_min=max_tcpa_min,
+        aois=aois,
+    )
+
 # ----------------------------------------------------------------------------
 # REST API Endpoints
 # ----------------------------------------------------------------------------
@@ -432,6 +486,16 @@ async def api_generate_intsum(aoi: str = "Bangalore", hours: int = 12):
 @app.post("/api/intsum/dispatch")
 async def api_dispatch_intsum(aoi: str = "Bangalore", hours: int = 12):
     return await intsum_engine.dispatch_summary(aoi, hours)
+
+@app.post("/api/kinematics/cpa")
+async def api_calculate_cpa(req: CpaRequest):
+    return await tool_calculate_pairwise_cpa(req.entity_a_id, req.entity_b_id)
+
+@app.post("/api/kinematics/conflicts")
+async def api_scan_conflicts(req: ScanConflictsRequest):
+    return await tool_scan_proximity_conflicts(
+        req.lat, req.lon, req.radius_km, req.min_cpa_km, req.max_tcpa_min
+    )
 
 @app.get("/api/mcp/tools")
 async def api_list_all_tools():
@@ -581,6 +645,22 @@ async def dispatch_intelligence_summary(aoi_name: str = "Bangalore", window_hour
 async def toggle_aoi_perimeters(visible: Optional[bool] = None) -> str:
     """Toggle or set visibility of 3D Area of Interest perimeter rings and tactical geofence beacons in the Cesium browser cockpit."""
     res = await hub.broadcast_command("toggle_aoi_visuals", {"visible": visible})
+    import json
+    return json.dumps(res, indent=2)
+
+@mcp_server.tool()
+async def calculate_cpa_intercept(entity_a_id: str, entity_b_id: str) -> str:
+    """Calculate 4D Closest Point of Approach (CPA), Time to CPA (TCPA), and closing velocity between two aircraft or vessels."""
+    res = await tool_calculate_pairwise_cpa(entity_a_id, entity_b_id)
+    import json
+    return json.dumps(res, indent=2)
+
+@mcp_server.tool()
+async def scan_proximity_conflicts(
+    lat: float, lon: float, radius_km: float = 100.0, min_cpa_km: float = 5.0, max_tcpa_min: float = 15.0
+) -> str:
+    """Radar conflict scanner: detect converging aircraft violating separation minimums or inbound on AOI intercept trajectories."""
+    res = await tool_scan_proximity_conflicts(lat, lon, radius_km, min_cpa_km, max_tcpa_min)
     import json
     return json.dumps(res, indent=2)
 

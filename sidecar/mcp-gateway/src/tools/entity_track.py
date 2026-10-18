@@ -13,12 +13,40 @@ async def lookup_entity_anchor(
 ) -> Optional[Dict[str, Any]]:
     """
     Two-hop lookup: Map a callsign, flight name, MMSI, or hex to exact coordinates.
+    Checks live Tile38 hot cache first, then falls back to TimescaleDB history.
     """
     clean_q = query.strip()
+
+    # Step 1: Check live Tile38 hot tier first for real-time contact
+    if router.redis:
+        for layer in ["flights", "vessels", "military"]:
+            try:
+                res = await router.redis.execute_command("GET", layer, clean_q, "WITHFIELDS")
+                if res:
+                    import json
+                    data = json.loads(res) if isinstance(res, (str, bytes)) else res
+                    if data.get("ok") and "object" in data:
+                        coords = data["object"].get("coordinates", [])
+                        fields = data.get("fields", {})
+                        if len(coords) >= 2:
+                            return {
+                                "entity_id": clean_q,
+                                "layer": layer,
+                                "lat": float(coords[1]),
+                                "lon": float(coords[0]),
+                                "altitude_m": float(fields.get("alt", 0.0)),
+                                "speed_kts": float(fields.get("spd", 0.0)),
+                                "heading_deg": float(fields.get("hdg", 0.0)),
+                                "timestamp": datetime.now(timezone.utc).isoformat(),
+                                "is_live": True,
+                            }
+            except Exception:
+                pass
+
     if not router.pg_pool:
         return None
 
-    # Step 1: Query TimescaleDB for matching entity_id or payload callsign/name
+    # Step 2: Query TimescaleDB for matching entity_id or payload callsign/name
     sql = """
         SELECT
             entity_id, layer, ts,

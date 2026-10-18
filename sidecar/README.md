@@ -200,14 +200,30 @@ curl -X POST http://localhost:8000/api/tools/toggle_aoi_perimeters \
   -d '{"visible": true}'
 ```
 
-### 13. Upstream Federated Core Tools (30 Tools)
+### 13. `calculate_cpa_intercept`
+Calculates 4D Closest Point of Approach (CPA), Time to CPA (TCPA), and closing velocity between two aircraft or vessels:
+```bash
+curl -X POST http://localhost:8000/api/tools/calculate_cpa_intercept \
+  -H "Content-Type: application/json" \
+  -d '{"entity_a_id": "04c1e8", "entity_b_id": "0d0e26"}'
+```
+
+### 14. `scan_proximity_conflicts`
+Performs a high-speed radar conflict scan to detect converging aircraft violating separation minimums or inbound on AOI intercept trajectories:
+```bash
+curl -X POST http://localhost:8000/api/tools/scan_proximity_conflicts \
+  -H "Content-Type: application/json" \
+  -d '{"lat": 12.9716, "lon": 77.5946, "radius_km": 150.0, "min_cpa_km": 5.0, "max_tcpa_min": 15.0}'
+```
+
+### 15. Upstream Federated Core Tools (30 Tools)
 `mcp-gateway` automatically discovers and proxies all 30 upstream God's Eye View MCP tools directly:
 - **`situation_brief`**: Unified operational picture (weather, quakes, fires, aircraft, ships, cyclones).
 - **`military_awareness`**: 250km radar perimeter of military aircraft, surface warships, and defense installations.
 - **`show_in_gods_eye_view`**: Live 3D Cesium camera and layer positioning with direct browser links.
 - **`get_earthquakes`**, **`get_weather`**, **`get_weather_radar`**, **`get_flights`**, **`get_ships`**, **`get_satellites`**, **`get_wildfires`**, **`get_air_quality`**, **`get_cctv`**, and more.
 
-All 42 tools can be invoked via standard HTTP `POST /api/tools/{tool_name}` or directly through Claude Desktop / Cursor / Windsurf via MCP.
+All 44 tools can be invoked via standard HTTP `POST /api/tools/{tool_name}` or directly through Claude Desktop / Cursor / Windsurf via MCP.
 
 ---
 

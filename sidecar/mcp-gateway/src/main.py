@@ -30,6 +30,7 @@ from .radar.engine import radar_engine
 from .sdr.engine import sdr_engine
 from .cot.engine import cot_engine
 from .meshtastic.engine import meshtastic_engine
+from .escort.engine import escort_engine
 
 # ----------------------------------------------------------------------------
 # Lifespan Lifecycle
@@ -54,8 +55,10 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(periodic_intsum_briefing())
     asyncio.create_task(cot_engine.start())
     asyncio.create_task(meshtastic_engine.start())
+    asyncio.create_task(escort_engine.start())
     yield
     print("[McpGateway] Closing router connections...")
+    escort_engine.stop()
     meshtastic_engine.stop()
     cot_engine.stop()
     sdr_engine.stop()
@@ -192,6 +195,38 @@ class MeshtasticSendRequest(BaseModel):
     text: str = Field(..., description="Alphanumeric text message to broadcast across the LoRa mesh")
     to_node: Optional[str] = Field("^all", description="Target node ID (e.g. '!4a18b01a' or '^all')")
     channel: Optional[int] = Field(0, description="Channel index (default 0)")
+
+class EscortTagRequest(BaseModel):
+    device_id: str = Field(..., description="Unique device/member identifier (e.g. 'varun_phone', 'convoy_1')")
+    name: str = Field(..., description="Display label (e.g. 'Varun Mobile', 'Lead Patrol SUV')")
+    device_type: Optional[str] = Field("person", description="Entity type: person, vehicle, asset, or vip")
+    lat: Optional[float] = Field(None, description="Initial latitude")
+    lon: Optional[float] = Field(None, description="Initial longitude")
+    alt_m: Optional[float] = Field(None, description="Initial altitude in meters")
+    bubble_radius_km: Optional[float] = Field(25.0, description="Protective bubble monitoring radius in km")
+    source: Optional[str] = Field("api", description="Tracking source identifier")
+
+class EscortPingRequest(BaseModel):
+    device_id: str = Field(..., description="Target device/member ID")
+    lat: float = Field(..., description="Current GPS latitude")
+    lon: float = Field(..., description="Current GPS longitude")
+    alt_m: Optional[float] = Field(0.0, description="Current altitude in meters")
+    speed_kts: Optional[float] = Field(0.0, description="Speed in knots")
+    heading_deg: Optional[float] = Field(0.0, description="Compass heading in degrees (0-360)")
+    source: Optional[str] = Field("mobile_ping", description="Telemetry source")
+
+class EscortQueryRequest(BaseModel):
+    device_id: str = Field(..., description="Tagged member or vehicle device ID to query relative to")
+    query_type: Optional[str] = Field("all", description="Query type: 'all', 'nearest_infrastructure', 'dam', 'military', 'datacenter', 'contacts', 'airspace'")
+    category: Optional[str] = Field(None, description="Optional specific category filter")
+    radius_km: Optional[float] = Field(None, description="Override scan radius in km")
+    limit: Optional[int] = Field(5, description="Maximum results to return")
+
+class EscortRouteRequest(BaseModel):
+    device_id: str = Field(..., description="Origin device ID")
+    dest_lat: float = Field(..., description="Destination latitude")
+    dest_lon: float = Field(..., description="Destination longitude")
+    corridor_width_km: Optional[float] = Field(15.0, description="Corridor buffer width in km")
 
 # ----------------------------------------------------------------------------
 # Tool Implementation Functions
@@ -687,6 +722,66 @@ async def api_start_meshtastic():
 async def api_stop_meshtastic():
     return meshtastic_engine.stop()
 
+@app.get("/api/escort/devices")
+async def api_get_escort_devices():
+    return {"devices": escort_engine.list_devices()}
+
+@app.get("/api/escort/device/{device_id}")
+async def api_get_escort_device(device_id: str):
+    dev = escort_engine.get_device(device_id)
+    if not dev:
+        raise HTTPException(status_code=404, detail=f"Escort device '{device_id}' not found")
+    return dev
+
+@app.post("/api/escort/tag")
+async def api_tag_escort_device(req: EscortTagRequest):
+    return escort_engine.tag_device(
+        device_id=req.device_id,
+        name=req.name,
+        device_type=req.device_type or "person",
+        lat=req.lat,
+        lon=req.lon,
+        alt_m=req.alt_m,
+        bubble_radius_km=req.bubble_radius_km,
+        source=req.source or "api",
+    )
+
+@app.post("/api/escort/ping")
+async def api_ping_escort_location(req: EscortPingRequest):
+    return escort_engine.update_location(
+        device_id=req.device_id,
+        lat=req.lat,
+        lon=req.lon,
+        alt_m=req.alt_m or 0.0,
+        speed_kts=req.speed_kts or 0.0,
+        heading_deg=req.heading_deg or 0.0,
+        source=req.source or "mobile_ping",
+    )
+
+@app.post("/api/escort/query")
+async def api_query_relative_to_escort(req: EscortQueryRequest):
+    return await escort_engine.query_relative(
+        device_id=req.device_id,
+        query_type=req.query_type or "all",
+        category=req.category,
+        radius_km=req.radius_km,
+        limit=req.limit or 5,
+    )
+
+@app.post("/api/escort/route")
+async def api_evaluate_escort_route(req: EscortRouteRequest):
+    return await escort_engine.evaluate_safe_route(
+        device_id=req.device_id,
+        dest_lat=req.dest_lat,
+        dest_lon=req.dest_lon,
+        corridor_width_km=req.corridor_width_km or 15.0,
+    )
+
+@app.delete("/api/escort/device/{device_id}")
+async def api_delete_escort_device(device_id: str):
+    success = escort_engine.remove_device(device_id)
+    return {"status": "removed" if success else "not_found", "device_id": device_id}
+
 @app.get("/api/mcp/tools")
 async def api_list_all_tools():
     """List all registered tools (both native and federated) with their schemas."""
@@ -1098,6 +1193,98 @@ async def broadcast_tactical_alert_over_mesh(
         "severity": severity,
         "message": message,
     }, indent=2)
+
+@mcp_server.tool()
+async def tag_escort_device(
+    device_id: str,
+    name: str,
+    device_type: str = "person",
+    lat: Optional[float] = None,
+    lon: Optional[float] = None,
+    alt_m: Optional[float] = None,
+    bubble_radius_km: float = 25.0,
+) -> str:
+    """Tag and register a personal phone, team member, VIP, or vehicle with a dynamic protective guardian bubble."""
+    res = escort_engine.tag_device(
+        device_id=device_id,
+        name=name,
+        device_type=device_type,
+        lat=lat,
+        lon=lon,
+        alt_m=alt_m,
+        bubble_radius_km=bubble_radius_km,
+        source="mcp_tool",
+    )
+    import json
+    return json.dumps(res, indent=2)
+
+@mcp_server.tool()
+async def update_escort_location(
+    device_id: str,
+    lat: float,
+    lon: float,
+    alt_m: float = 0.0,
+    speed_kts: float = 0.0,
+    heading_deg: float = 0.0,
+) -> str:
+    """Update live GPS location, speed, and heading for a tagged person or vehicle (moves their protective bubble)."""
+    res = escort_engine.update_location(
+        device_id=device_id,
+        lat=lat,
+        lon=lon,
+        alt_m=alt_m,
+        speed_kts=speed_kts,
+        heading_deg=heading_deg,
+        source="mcp_update",
+    )
+    import json
+    return json.dumps(res, indent=2)
+
+@mcp_server.tool()
+async def get_escort_status(device_id: Optional[str] = None) -> str:
+    """List all monitored members, vehicles, their live coordinates, safety verdicts (SAFE/ADVISORY/ALERT), and active threats."""
+    if device_id:
+        res = escort_engine.get_device(device_id)
+    else:
+        res = escort_engine.list_devices()
+    import json
+    return json.dumps(res, indent=2)
+
+@mcp_server.tool()
+async def query_relative_to_escort(
+    device_id: str,
+    query_type: str = "all",
+    category: Optional[str] = None,
+    radius_km: Optional[float] = None,
+    limit: int = 5,
+) -> str:
+    """Spatial Q&A relative to member's live moving location: 'What is the nearest dam/military base/hospital?', local contacts, or weather."""
+    res = await escort_engine.query_relative(
+        device_id=device_id,
+        query_type=query_type,
+        category=category,
+        radius_km=radius_km,
+        limit=limit,
+    )
+    import json
+    return json.dumps(res, indent=2)
+
+@mcp_server.tool()
+async def evaluate_escort_route(
+    device_id: str,
+    dest_lat: float,
+    dest_lon: float,
+    corridor_width_km: float = 15.0,
+) -> str:
+    """Evaluate travel corridor from a member's moving location to a destination for intersecting infrastructure, military, or environmental hazards."""
+    res = await escort_engine.evaluate_safe_route(
+        device_id=device_id,
+        dest_lat=dest_lat,
+        dest_lon=dest_lon,
+        corridor_width_km=corridor_width_km,
+    )
+    import json
+    return json.dumps(res, indent=2)
 
 # Mount SSE app on FastAPI: exposes /mcp/sse and /mcp/messages
 app.mount("/mcp", mcp_server.sse_app())

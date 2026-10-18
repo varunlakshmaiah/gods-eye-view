@@ -322,11 +322,87 @@ This document outlines the **6 Core Verification Test Suites** used to validate 
   ```
 * **Success Criteria:** Returns `status: "broadcasted"` with packet ID and timestamp.
 
-### Test 12.3: Verify Total MCP Tool Inventory (Must Equal 65)
-* **Objective:** Verify all 65 tools (35 Native Sidecar + 30 Upstream Federated) are active and discoverable.
+### Test 12.3: Verify Total MCP Tool Inventory (Must Equal 70)
+* **Objective:** Verify all 70 tools (40 Native Sidecar + 30 Upstream Federated) are active and discoverable.
 * **Execution:**
   ```bash
   curl -s http://127.0.0.1:8000/api/mcp/tools | jq '.tools | length'
   ```
-* **Success Criteria:** Outputs exactly `65`.
+* **Success Criteria:** Outputs exactly `70`.
+
+---
+
+## Test Suite 13: Multi-Entity Dynamic Escort & Guardian Bubbles
+
+### Test 13.1: Verify Dynamic Escort Roster & Bubble Tracking
+* **Objective:** Retrieve all currently monitored members, VIPs, and vehicles with live protective bubble perimeters.
+* **Execution:**
+  ```bash
+  curl -s http://127.0.0.1:8000/api/escort/devices | jq .
+  ```
+* **Success Criteria:** Returns registered devices (`vip_phone_1`, `convoy_alpha`), safety verdicts (`SAFE`), bubble radii, and last updated timestamps.
+
+### Test 13.2: Tag a New Team Member or Vehicle
+* **Objective:** Register a new moving entity with a custom protective radius.
+* **Execution:**
+  ```bash
+  curl -s -X POST http://127.0.0.1:8000/api/escort/tag \
+    -H "Content-Type: application/json" \
+    -d '{
+      "device_id": "patrol_suv_3",
+      "name": "Patrol SUV 3",
+      "device_type": "vehicle",
+      "lat": 12.9800,
+      "lon": 77.6000,
+      "alt_m": 920.0,
+      "bubble_radius_km": 30.0
+    }' | jq .
+  ```
+* **Success Criteria:** Returns `status: "tagged"` with new device record.
+
+### Test 13.3: Ingest Moving GPS Fix (Phone Ping)
+* **Objective:** Move the entity's position to simulate highway or city travel.
+* **Execution:**
+  ```bash
+  curl -s -X POST http://127.0.0.1:8000/api/escort/ping \
+    -H "Content-Type: application/json" \
+    -d '{
+      "device_id": "patrol_suv_3",
+      "lat": 13.0100,
+      "lon": 77.6200,
+      "speed_kts": 35.0,
+      "heading_deg": 30.0
+    }' | jq .
+  ```
+* **Success Criteria:** Returns `status: "location_updated"` with updated coordinates.
+
+### Test 13.4: Execute Spatial Q&A Relative to Moving Location
+* **Objective:** Ask what critical infrastructure (dams, military bases, datacenters) or contacts are nearest relative to the moving member.
+* **Execution:**
+  ```bash
+  curl -s -X POST http://127.0.0.1:8000/api/escort/query \
+    -H "Content-Type: application/json" \
+    -d '{
+      "device_id": "vip_phone_1",
+      "query_type": "military",
+      "limit": 3
+    }' | jq .
+  ```
+* **Success Criteria:** Returns nearest military installations with distance in km, compass bearing, and cardinal direction relative to the member.
+
+### Test 13.5: Evaluate Safe Travel Corridor Hazard Clearance
+* **Objective:** Sample a travel route to a destination and verify clearance from military installations, hazardous dams, and fires.
+* **Execution:**
+  ```bash
+  curl -s -X POST http://127.0.0.1:8000/api/escort/route \
+    -H "Content-Type: application/json" \
+    -d '{
+      "device_id": "vip_phone_1",
+      "dest_lat": 13.0827,
+      "dest_lon": 80.2707,
+      "corridor_width_km": 15.0
+    }' | jq .
+  ```
+* **Success Criteria:** Returns `total_distance_km`, `safety_verdict` (`CLEAR`, `CAUTION`, `AVOID_RECOMMENDED`), and waypoint hazard breakdown.
+
 

@@ -1,13 +1,13 @@
 # Gods-Eye-View Sidecar: Comprehensive Feature Catalog & Capabilities Specification
 
 > **A Sovereign Personal C6ISR (Command, Control, Communications, Computers, Cyber, Cognitive, Intelligence, Surveillance, Reconnaissance) Platform**  
-> *Current Release: `v1.11.0-sidecar` | 65 MCP Tools | Meshtastic LoRa Relay & ATAK CoT | 100% Upstream Isolated*
+> *Current Release: `v1.12.0-sidecar` | 70 MCP Tools | Multi-Entity Dynamic Escort Bubble Engine | 100% Upstream Isolated*
 
 ---
 
 ## 1. Executive Feature Overview
 
-The Gods-Eye-View Sidecar extends the Gods-Eye-View 3D geospatial engine into an autonomous, proactive personal intelligence sentinel. While upstream Gods-Eye-View acts as a visual browser globe, the Sidecar injects an enterprise multi-tier spatio-temporal data pipeline, an autonomous background watchstander daemon, kinematic vector analytics, line-of-sight radar physics, sovereign edge radio ingestion, real-time Cursor-on-Target (CoT) tactical data link streaming to mobile ATAK-CIV, and long-range off-grid Meshtastic LoRa radio mesh relays.
+The Gods-Eye-View Sidecar extends the Gods-Eye-View 3D geospatial engine into an autonomous, proactive personal intelligence sentinel. While upstream Gods-Eye-View acts as a visual browser globe, the Sidecar injects an enterprise multi-tier spatio-temporal data pipeline, an autonomous background watchstander daemon, kinematic vector analytics, line-of-sight radar physics, sovereign edge radio ingestion, real-time Cursor-on-Target (CoT) tactical data link streaming to mobile ATAK-CIV, long-range off-grid Meshtastic LoRa radio mesh relays, and a **Multi-Entity Dynamic Escort Bubble Engine** that moves with your phone or vehicle anywhere on Earth.
 
 ```mermaid
 flowchart TB
@@ -20,6 +20,7 @@ flowchart TB
         S6["NOAA / GFS (Atmospheric Weather)"]
         S7["Physical RTL-SDR ($30 USB Dongle RF)"]
         S8["Meshtastic LoRa Field Nodes (865/868/915MHz)"]
+        S9["Personal Mobile GPS / ATAK PLI (Live Escort Fixes)"]
     end
 
     subgraph StorageTiers ["Spatio-Temporal Memory Stack"]
@@ -37,6 +38,7 @@ flowchart TB
         E6["SdrEngine (Sovereign 1090MHz/162MHz Feeder)"]
         E7["CotEngine (ATAK / CoT 2.0 UDP Broadcaster)"]
         E8["MeshtasticEngine (LoRa Off-Grid Mesh Relay)"]
+        E9["PersonalEscortEngine (Dynamic Multi-Bubble Guardian)"]
     end
 
     subgraph Dispatches ["Multi-Channel Command & Control"]
@@ -47,7 +49,7 @@ flowchart TB
         C5["Slack Webhooks (#defense-ops)"]
         C6["ATAK-CIV / WinTAK / iTAK Mobile Mesh (UDP :4242)"]
         C7["Meshtastic Decentralized LoRa Radios (Off-Grid Mesh)"]
-        C8["65 MCP Tools (Claude Desktop / Cursor / Windsurf)"]
+        C8["70 MCP Tools (Claude Desktop / Cursor / Windsurf)"]
     end
 
     DataSources --> StorageTiers
@@ -69,13 +71,14 @@ flowchart TB
 | **`v1.8.0-sidecar`** | **Phase 4.2: 3D Radar Horizons** | • Standard 4/3 effective Earth radius atmospheric refraction physics.<br/>• Radar horizon calculation: $d \approx 4.12 \times (\sqrt{h_{\text{radar}}} + \sqrt{h_{\text{target}}})$.<br/>• True 3D slant range & elevation angle spherical geometry.<br/>• Overhead cone of silence & horizon shadow detection.<br/>• 3D translucent radar domes, range rings & azimuth radials in Cesium. | 20 | **50** |
 | **`v1.9.0-sidecar`** | **Phase 4.3: Sovereign Edge SDR Ingestion** | • Plug-and-play RTL-SDR USB receiver ($30 hardware dongle).<br/>• 1090MHz ADS-B Mode-S & 162MHz Marine AIS radio reception.<br/>• Tri-mode ingest: `synthetic_rf`, `tcp_sbs` (port 30003), `http_json`.<br/>• Standalone feeder container (`sidecar/sdr/`).<br/>• 100% offline, unjammable sovereign tracking bubble. | 25 | **55** |
 | **`v1.10.0-sidecar`** | **Phase 4.4: ATAK / CoT Tactical Data Link** | • Cursor-on-Target (CoT 2.0 XML) serialization engine.<br/>• Sub-second UDP broadcast (`255.255.255.255:4242`) and unicast targets.<br/>• MIL-STD-2525 symbol mappings (civil/military air, sea, radar, AOIs).<br/>• Instant emergency 911 alerts (`t-x-d-a`) for 7700 squawks & Sentinel tripwires.<br/>• Civilian situational awareness on ATAK-CIV Android mobile devices worldwide. | 30 | **60** |
-| **`v1.11.0-sidecar`** | **Phase 4.5: Meshtastic / LoRa Tactical Relay** | • Off-grid LoRa radio mesh relay (865MHz IN, 868MHz EU, 915MHz US).<br/>• Decentralized field node discovery & live telemetry (GPS, SNR, Battery %).<br/>• Auto-forwarding critical Sentinel alerts over the mesh to handheld radios.<br/>• Ingestion into Tile38 & ATAK CoT as Friendly Ground Units (`a-f-G-U-C`).<br/>• Tri-mode support: `synthetic_mesh`, `tcp` (port 4403), `serial` (`/dev/ttyUSB0`). | **35** | **65** |
+| **`v1.11.0-sidecar`** | **Phase 4.5: Meshtastic / LoRa Tactical Relay** | • Off-grid LoRa radio mesh relay (865MHz IN, 868MHz EU, 915MHz US).<br/>• Decentralized field node discovery & live telemetry (GPS, SNR, Battery %).<br/>• Auto-forwarding critical Sentinel alerts over the mesh to handheld radios.<br/>• Ingestion into Tile38 & ATAK CoT as Friendly Ground Units (`a-f-G-U-C`).<br/>• Tri-mode support: `synthetic_mesh`, `tcp` (port 4403), `serial` (`/dev/ttyUSB0`). | 35 | **65** |
+| **`v1.12.0-sidecar`** | **Phase 4.6: Multi-Entity Dynamic Escort Bubbles** | • Dynamic moving protective bubbles around tagged personal phones, team members, or vehicles.<br/>• Live GPS ingestion via mobile ping, ATAK PLI, or LoRa tracking.<br/>• Spatial Q&A relative to moving member: nearest dams, military installations, hospitals.<br/>• Geodesic travel corridor hazard evaluation (hazard avoidance clearances).<br/>• Proactive Guardian Sentinel alerts for bubble perimeter breaches. | **40** | **70** |
 
 ---
 
-## 3. Complete MCP Tool Catalog (65 Tools)
+## 3. Complete MCP Tool Catalog (70 Tools)
 
-All 65 tools are exposed via dual transports:
+All 70 tools are exposed via dual transports:
 1. **Model Context Protocol (MCP)** via SSE (`/mcp/sse`) and stdio (`python -m src.mcp_stdio`) for Claude Desktop, Cursor, and Windsurf.
 2. **REST API** via HTTP `POST /api/tools/{tool_name}` for scripts, curl, or webhooks.
 
@@ -333,6 +336,49 @@ All 65 tools are exposed via dual transports:
   * `severity` *(string, default: "CRITICAL")*: Alert severity level.
   * `message` *(string, default: "Airspace perimeter breach detected")*: Alert description.
 
+#### 36. `tag_escort_device`
+* **Purpose:** Tags and registers a personal phone, family member, security detail, or vehicle with a dynamic, mobile protective guardian bubble.
+* **Parameters:**
+  * `device_id` *(string, required)*: Unique identifier (e.g. `varun_phone`, `convoy_alpha`).
+  * `name` *(string, required)*: Display label.
+  * `device_type` *(string, default: "person")*: Entity type: `person`, `vehicle`, `asset`, or `vip`.
+  * `lat` *(float, optional)*: Initial latitude coordinate.
+  * `lon` *(float, optional)*: Initial longitude coordinate.
+  * `alt_m` *(float, optional)*: Altitude in meters.
+  * `bubble_radius_km` *(float, default: 25.0)*: Protective monitoring radius in km.
+
+#### 37. `update_escort_location`
+* **Purpose:** Ingests real-time GPS fixes from phone ping, vehicle tracker, or ATAK PLI, shifting the protective bubble in real-time as the member travels.
+* **Parameters:**
+  * `device_id` *(string, required)*: Device ID.
+  * `lat` *(float, required)*: Current latitude.
+  * `lon` *(float, required)*: Current longitude.
+  * `alt_m` *(float, default: 0.0)*: Altitude in meters.
+  * `speed_kts` *(float, default: 0.0)*: Speed in knots.
+  * `heading_deg` *(float, default: 0.0)*: Direction of travel in degrees (0–360).
+
+#### 38. `get_escort_status`
+* **Purpose:** Lists all monitored members and vehicles, their live positions, protective bubble radii, active threats, and safety status (`SAFE`, `ADVISORY`, `ALERT`).
+* **Parameters:**
+  * `device_id` *(string, optional)*: Specific device ID, or all if omitted.
+
+#### 39. `query_relative_to_escort`
+* **Purpose:** Executes spatial multi-INT queries relative to any moving member's current position: "What is the nearest dam?", "Nearest military base?", "Local airspace contacts?", "Live weather?".
+* **Parameters:**
+  * `device_id` *(string, required)*: Device ID to query relative to.
+  * `query_type` *(string, default: "all")*: `all`, `nearest_infrastructure`, `dam`, `military`, `datacenter`, `contacts`, `airspace`.
+  * `category` *(string, optional)*: Specific infrastructure filter.
+  * `radius_km` *(float, optional)*: Query distance override in km.
+  * `limit` *(int, default: 5)*: Maximum ranked results.
+
+#### 40. `evaluate_escort_route`
+* **Purpose:** Evaluates a travel corridor between a member's current location and a destination, detecting intersecting military installations, hazardous dams, wildfires, and airspace conflicts.
+* **Parameters:**
+  * `device_id` *(string, required)*: Origin device ID.
+  * `dest_lat` *(float, required)*: Destination latitude.
+  * `dest_lon` *(float, required)*: Destination longitude.
+  * `corridor_width_km` *(float, default: 15.0)*: Safety buffer corridor width in km.
+
 ---
 
 ### Section B: Upstream Federated Core Surveillance Tools (30 Tools)
@@ -477,6 +523,13 @@ sequenceDiagram
 | `POST` | `/api/meshtastic/send` | Transmit text message across LoRa radio mesh | `{"text", "to_node", "channel"}` |
 | `POST` | `/api/meshtastic/start` | Start Meshtastic background relay daemon | None |
 | `POST` | `/api/meshtastic/stop` | Stop Meshtastic background relay daemon | None |
+| `GET` | `/api/escort/devices` | List all monitored members, vehicles & bubbles | None |
+| `GET` | `/api/escort/device/{id}` | Retrieve specific member/vehicle safety status | None |
+| `POST` | `/api/escort/tag` | Tag & register new member or vehicle bubble | `{"device_id", "name", "device_type", "bubble_radius_km"}` |
+| `POST` | `/api/escort/ping` | Ingest live GPS coordinates (phone/vehicle ping) | `{"device_id", "lat", "lon", "alt_m", "speed_kts", "heading_deg"}` |
+| `POST` | `/api/escort/query` | Spatial Q&A relative to moving member/vehicle | `{"device_id", "query_type", "category", "radius_km", "limit"}` |
+| `POST` | `/api/escort/route` | Safe route corridor hazard evaluation | `{"device_id", "dest_lat", "dest_lon", "corridor_width_km"}` |
+| `DELETE`| `/api/escort/device/{id}`| Untag and remove device bubble | None |
 | `WS` | `/ws/copilot` | Bi-directional WebSocket Co-Pilot Hub | Real-time viewport & command stream |
 
 ---
@@ -618,4 +671,51 @@ Any critical Sentinel event (CPA proximity conflicts, transponder dropouts, squa
 🚨 [CRITICAL] Airspace Conflict: 8014bb ↔ 7bc008 CPA: 1.2km TCPA: 4.5m
 ```
 Field teams carrying small pocket LoRa radios receive this alert instantly on their device screens even in remote valleys, forests, or disaster zones.
+
+---
+
+## 9. Multi-Entity Dynamic Escort & Guardian Bubbles Guide
+
+### Mobile Personal Intelligence That Moves Wherever You Go
+With `v1.12.0-sidecar`, the Sentinel is no longer pinned to a single stationary city coordinate. You can tag your own smartphone, multiple team members, security convoys, or family vehicles. The system creates a moving 25km–50km **Guardian Bubble** around each entity that continuously travels with them across highways, cities, or remote terrains.
+
+#### Core Capabilities:
+1. **Multi-Entity Tracking & Ingestion:**
+   Tag any number of devices:
+   ```bash
+   # Tag a personal smartphone
+   curl -X POST http://localhost:8000/api/escort/tag \
+     -H "Content-Type: application/json" \
+     -d '{"device_id": "varun_phone", "name": "Varun Phone", "device_type": "person", "bubble_radius_km": 25.0}'
+   ```
+   Update its moving location with a simple HTTP ping (from phone shortcuts, Owntracks, Home Assistant, or ATAK PLI):
+   ```bash
+   curl -X POST http://localhost:8000/api/escort/ping \
+     -H "Content-Type: application/json" \
+     -d '{"device_id": "varun_phone", "lat": 12.9800, "lon": 77.6000, "speed_kts": 15.0, "heading_deg": 45.0}'
+   ```
+
+2. **Spatial Q&A Relative to Moving Location:**
+   Ask questions dynamically relative to the person's current position:
+   ```bash
+   # What is the nearest dam relative to me?
+   curl -X POST http://localhost:8000/api/escort/query \
+     -H "Content-Type: application/json" \
+     -d '{"device_id": "varun_phone", "query_type": "dam", "radius_km": 250}'
+   ```
+   Returns distance, bearing, and compass direction:
+   ```json
+   {
+     "relative_description": "Akasaganga (dam) is 204.4 km NE of Varun Phone"
+   }
+   ```
+
+3. **Safe Travel Corridor Hazard Evaluation:**
+   Before driving or navigating, evaluate the route between your current moving position and a destination:
+   ```bash
+   curl -X POST http://localhost:8000/api/escort/route \
+     -H "Content-Type: application/json" \
+     -d '{"device_id": "varun_phone", "dest_lat": 13.0827, "dest_lon": 80.2707, "corridor_width_km": 15.0}'
+   ```
+   Samples waypoints along the route, scans for intersecting high-hazard dams, military restricted zones, or active fires, and provides a clear safety clearance verdict (`CLEAR`, `CAUTION`, `AVOID_RECOMMENDED`).
 

@@ -134,5 +134,16 @@
       "cone_of_silence_deg": 35.0,
       "enabled": true
     }
-  ]
+  ],
+  "sdr_receiver": {
+    "enabled": false,
+    "mode": "synthetic_rf",
+    "station_name": "Bangalore Sovereign Edge SDR-1",
+    "frequency_mhz": 1090.0,
+    "source_host": "127.0.0.1",
+    "source_port": 30003,
+    "poll_interval_sec": 3.0,
+    "http_url": "http://127.0.0.1:8080/data/aircraft.json",
+    "auto_start": false
+  }
 }

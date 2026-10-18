@@ -90,6 +90,22 @@ services:
       - ./sidecar/config:/app/config
     restart: unless-stopped
 
+  sdr-feeder:
+    build:
+      context: ./sidecar/sdr
+      dockerfile: Dockerfile
+    profiles:
+      - sdr
+    environment:
+      - GATEWAY_URL=http://upstream:8000
+      - SDR_MODE=synthetic_rf
+      - STATION_NAME=Bangalore Sovereign Edge SDR-1
+    networks:
+      - sidecar_net
+    depends_on:
+      - mcp-gateway
+    restart: unless-stopped
+
 volumes:
   tile38_data:
   timescale_data:

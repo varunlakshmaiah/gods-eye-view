@@ -260,14 +260,46 @@ curl -X POST http://localhost:8000/api/radar/render_domes \
   -d '{"enabled": true}'
 ```
 
-### 21. Upstream Federated Core Tools (30 Tools)
+### 21. `get_sdr_status`
+Checks sovereign edge SDR receiver status, active frequency (1090MHz ADS-B / 162MHz AIS), message rates (msg/sec), and active local RF contact counts:
+```bash
+curl -X GET http://localhost:8000/api/sdr/status
+```
+
+### 22. `configure_sdr_receiver`
+Configures sovereign edge SDR receiver operating modes (`synthetic_rf`, `tcp_sbs`, `http_json`), host/IP, port, frequency, or polling intervals:
+```bash
+curl -X POST http://localhost:8000/api/sdr/configure \
+  -H "Content-Type: application/json" \
+  -d '{"mode": "synthetic_rf", "station_name": "Bangalore Sovereign Edge SDR-1"}'
+```
+
+### 23. `start_sdr_stream`
+Starts the sovereign SDR background ingestion stream, feeding local Mode-S and AIS RF packets into Tile38, TimescaleDB, and the Sentinel alert tripwires:
+```bash
+curl -X POST http://localhost:8000/api/sdr/start
+```
+
+### 24. `stop_sdr_stream`
+Stops or pauses sovereign edge SDR radio ingestion:
+```bash
+curl -X POST http://localhost:8000/api/sdr/stop
+```
+
+### 25. `get_sdr_contacts`
+Retrieves all contacts received exclusively via sovereign local edge RF transponder signals with signal strength (RSSI in dBFS) and message count:
+```bash
+curl -X GET http://localhost:8000/api/sdr/contacts
+```
+
+### 26. Upstream Federated Core Tools (30 Tools)
 `mcp-gateway` automatically discovers and proxies all 30 upstream God's Eye View MCP tools directly:
 - **`situation_brief`**: Unified operational picture (weather, quakes, fires, aircraft, ships, cyclones).
 - **`military_awareness`**: 250km radar perimeter of military aircraft, surface warships, and defense installations.
 - **`show_in_gods_eye_view`**: Live 3D Cesium camera and layer positioning with direct browser links.
 - **`get_earthquakes`**, **`get_weather`**, **`get_weather_radar`**, **`get_flights`**, **`get_ships`**, **`get_satellites`**, **`get_wildfires`**, **`get_air_quality`**, **`get_cctv`**, and more.
 
-All 50 tools can be invoked via standard HTTP `POST /api/tools/{tool_name}` or directly through Claude Desktop / Cursor / Windsurf via MCP.
+All 55 tools can be invoked via standard HTTP `POST /api/tools/{tool_name}` or directly through Claude Desktop / Cursor / Windsurf via MCP.
 
 ---
 

@@ -27,6 +27,7 @@ from .intsum.engine import intsum_engine
 from .kinematics.cpa import calculate_pairwise_cpa, calculate_aoi_intercept, scan_airspace_conflicts
 from .pol.engine import pol_engine
 from .radar.engine import radar_engine
+from .sdr.engine import sdr_engine
 
 # ----------------------------------------------------------------------------
 # Lifespan Lifecycle
@@ -51,6 +52,7 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(periodic_intsum_briefing())
     yield
     print("[McpGateway] Closing router connections...")
+    sdr_engine.stop()
     tripwire_engine.stop()
     await router.close()
 
@@ -143,6 +145,15 @@ class RadarCoverageRequest(BaseModel):
 class RadarRenderRequest(BaseModel):
     enabled: bool = Field(True, description="Enable or disable 3D radar domes rendering")
     station_id: Optional[str] = Field(None, description="Optional specific radar station ID")
+
+class SdrConfigRequest(BaseModel):
+    mode: Optional[str] = Field(None, description="Ingestion mode: synthetic_rf, tcp_sbs, or http_json")
+    station_name: Optional[str] = Field(None, description="Station identifier")
+    frequency_mhz: Optional[float] = Field(None, description="Tuned frequency in MHz (e.g. 1090.0 or 162.0)")
+    source_host: Optional[str] = Field(None, description="Hostname/IP of SBS or readsb feed")
+    source_port: Optional[int] = Field(None, description="Port number for SBS TCP feed (default 30003)")
+    http_url: Optional[str] = Field(None, description="HTTP URL for aircraft.json polling")
+    poll_interval_sec: Optional[float] = Field(None, description="Polling interval in seconds")
 
 # ----------------------------------------------------------------------------
 # Tool Implementation Functions
@@ -533,6 +544,34 @@ async def api_evaluate_entity_radar_coverage(entity_id: str):
 async def api_render_radar_domes(req: RadarRenderRequest):
     return await radar_engine.render_domes(req.enabled, req.station_id)
 
+@app.get("/api/sdr/status")
+async def api_get_sdr_status():
+    return sdr_engine.get_status()
+
+@app.post("/api/sdr/configure")
+async def api_configure_sdr(req: SdrConfigRequest):
+    return sdr_engine.configure(
+        mode=req.mode,
+        station_name=req.station_name,
+        frequency_mhz=req.frequency_mhz,
+        source_host=req.source_host,
+        source_port=req.source_port,
+        http_url=req.http_url,
+        poll_interval_sec=req.poll_interval_sec,
+    )
+
+@app.post("/api/sdr/start")
+async def api_start_sdr():
+    return await sdr_engine.start()
+
+@app.post("/api/sdr/stop")
+async def api_stop_sdr():
+    return sdr_engine.stop()
+
+@app.get("/api/sdr/contacts")
+async def api_get_sdr_contacts():
+    return {"contacts": sdr_engine.get_contacts()}
+
 @app.get("/api/mcp/tools")
 async def api_list_all_tools():
     """List all registered tools (both native and federated) with their schemas."""
@@ -745,6 +784,57 @@ async def evaluate_entity_radar_coverage(entity_id: str) -> str:
 async def render_radar_domes(enabled: bool = True, station_id: Optional[str] = None) -> str:
     """Render 3D hemispherical radar coverage envelopes, range rings, and azimuth radials in the Cesium browser globe."""
     res = await radar_engine.render_domes(enabled, station_id)
+    import json
+    return json.dumps(res, indent=2)
+
+@mcp_server.tool()
+async def get_sdr_status() -> str:
+    """Check sovereign edge SDR receiver status, active frequency, message rates, and contact counts."""
+    res = sdr_engine.get_status()
+    import json
+    return json.dumps(res, indent=2)
+
+@mcp_server.tool()
+async def configure_sdr_receiver(
+    mode: Optional[str] = None,
+    station_name: Optional[str] = None,
+    frequency_mhz: Optional[float] = None,
+    source_host: Optional[str] = None,
+    source_port: Optional[int] = None,
+    http_url: Optional[str] = None,
+    poll_interval_sec: Optional[float] = None,
+) -> str:
+    """Configure sovereign edge SDR receiver modes ('synthetic_rf', 'tcp_sbs', 'http_json'), host, port, or frequency."""
+    res = sdr_engine.configure(
+        mode=mode,
+        station_name=station_name,
+        frequency_mhz=frequency_mhz,
+        source_host=source_host,
+        source_port=source_port,
+        http_url=http_url,
+        poll_interval_sec=poll_interval_sec,
+    )
+    import json
+    return json.dumps(res, indent=2)
+
+@mcp_server.tool()
+async def start_sdr_stream() -> str:
+    """Start local sovereign edge SDR receiver ingestion (Mode-S 1090MHz ADS-B / 162MHz AIS)."""
+    res = await sdr_engine.start()
+    import json
+    return json.dumps(res, indent=2)
+
+@mcp_server.tool()
+async def stop_sdr_stream() -> str:
+    """Stop local sovereign edge SDR receiver ingestion stream."""
+    res = sdr_engine.stop()
+    import json
+    return json.dumps(res, indent=2)
+
+@mcp_server.tool()
+async def get_sdr_contacts() -> str:
+    """Retrieve all contacts received via local sovereign edge RF transponder signals with signal strength (RSSI)."""
+    res = sdr_engine.get_contacts()
     import json
     return json.dumps(res, indent=2)
 

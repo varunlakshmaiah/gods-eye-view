@@ -4,6 +4,16 @@
 
 ---
 
+## 📚 Documentation Suite
+
+Comprehensive technical guides are available in the [`docs/`](./docs) directory:
+* 🏛️ **[System Architecture (ARCHITECTURE.md)](./docs/ARCHITECTURE.md):** System topology, network namespace pairing, loopback bypass, and data flow.
+* 📐 **[Technical Design Specifications (DESIGN.md)](./docs/DESIGN.md):** Dynamic MCP tool reflection, multi-tier spatial storage, SGP4 orbital mechanics, and WebSocket bridge.
+* 🛠️ **[Build & Deployment Guide (BUILD_AND_DEPLOYMENT.md)](./docs/BUILD_AND_DEPLOYMENT.md):** Step-by-step setup, container fleet operations, Claude Desktop integration, and PostGIS infrastructure seeding.
+* 🧪 **[Verification & Test Scenarios (TEST_SCENARIOS.md)](./docs/TEST_SCENARIOS.md):** 6 end-to-end verification test suites covering isolation, geofencing, headless mode, cockpit control, and Claude STDIO.
+
+---
+
 ## 1. Upstream Isolation Contract
 
 This project is structured as a non-invasive sidecar to `bilawalsidhu/gods-eye-view`.

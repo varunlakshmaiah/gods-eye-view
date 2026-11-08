@@ -158,3 +158,22 @@ stateDiagram-v2
 * **Activity Tracking:** Every request passing through `proxy-tee` updates `lastClientActivity = Date.now()`.
 * **Headless Transition:** If no user traffic is received for 60 seconds, the background governor activates polling tasks respecting provider rate limits (Flights: 15s, Vessels: 30s, FIRMS: 30m, CelesTrak: 6h).
 * **Instant Disarm:** The moment a user re-opens or navigates `http://localhost:8080`, background polling suspends immediately to conserve provider quotas.
+
+---
+
+## 6. Feature Flag Registry
+
+### Problem & Challenge
+The sidecar grew from 5 tools to 70 tools plus several always-on background engines (tripwire loop, CoT UDP broadcaster, Meshtastic relay, escort sentinel). Operators need to switch any single capability off (to save quota, disk or network, or to limit what an AI assistant can do) without editing code or restarting containers.
+
+### Architectural Solution
+* **Catalog:** `sidecar/config/features.json` holds one entry per feature (`enabled`, `service`, `category`, `description`, optional `requires` and `restart_required`).
+* **Evaluation (identical in `features.py` and `features.ts`):** effective state = env lock (`SIDECAR_FEATURE_<ID>` > `SIDECAR_FEATURES_DISABLED` > `SIDECAR_FEATURES_ENABLED`) or the file value or the built-in default; then AND-ed with all `requires` (cycles evaluate to off).
+* **Enforcement points:**
+  * `FeatureGateMiddleware` (pure ASGI, so SSE and WebSocket streams are untouched) maps path prefixes and `/api/tools/{name}` to features via `ROUTE_FEATURES` / `TOOL_FEATURES` in `feature_gates.py`. It sits inside the CORS middleware so `403` responses keep CORS headers.
+  * `sync_tool_visibility()` snapshots every native tool at import (`NATIVE_TOOLS`) and adds or removes entries in the MCP tool manager, so `tools/list` reflects the flags. Unmapped tools are treated as upstream federated tools (`upstream_tool_federation`).
+  * `apply_feature_state()` starts or stops engines listed in `LIFECYCLE_FEATURES`; long-running loops are tracked as cancellable tasks.
+  * `AlertDispatcher.dispatch()` checks one `notify_*` / `cot_atak` / `meshtastic_relay` flag per channel.
+  * `proxy-tee` checks flags per request (`TAP_FEATURES`, route handlers) and inside `TimescaleSink.enqueue*` and each heartbeat poll.
+  * The browser bridge keeps a `sidecarFeatures` map (`featureOn(id)` defaults to on) and re-applies visuals on `feature_sync`.
+* **Hot reload:** `watch_feature_file()` (gateway, `SIDECAR_FEATURES_RELOAD_SEC`) and `FeatureRegistry.watch()` (proxy, `SIDECAR_FEATURES_RELOAD_MS`) compare mtimes and apply only the effective-state diff.

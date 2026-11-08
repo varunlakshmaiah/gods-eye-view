@@ -29,6 +29,14 @@ cp sidecar/.env.sidecar.example sidecar/.env.sidecar
 | `HEADLESS_VESSELS_INTERVAL_MS` | `30000` | Background vessel polling interval (30s) |
 | `HEADLESS_FIRMS_INTERVAL_MS` | `1800000` | Background NASA FIRMS fire polling (30m) |
 | `HEADLESS_CELESTRAK_INTERVAL_MS`| `21600000` | Background CelesTrak TLE polling (6h) |
+| `SIDECAR_FEATURES_FILE` | `/app/config/features.json` | Feature flag catalog shared by `proxy-tee` and `mcp-gateway` |
+| `SIDECAR_FEATURES_DISABLED` | *(empty)* | Comma-separated feature IDs forced off (locks them) |
+| `SIDECAR_FEATURES_ENABLED` | *(empty)* | Comma-separated feature IDs forced on (locks them) |
+| `SIDECAR_FEATURE_<ID>` | *(unset)* | Per-feature `true`/`false` override, highest precedence (add to the service's `environment:` block) |
+| `SIDECAR_FEATURES_RELOAD_SEC` | `5` | How often `mcp-gateway` re-reads `features.json` |
+| `SIDECAR_FEATURES_RELOAD_MS` | `3000` | How often `proxy-tee` re-reads `features.json` |
+
+See [FEATURE_FLAGS.md](./FEATURE_FLAGS.md) for the full list of features and how to toggle them.
 
 ---
 
@@ -56,12 +64,17 @@ Expected output:
 * **Proxy-Tee Health:**
   ```bash
   curl -s http://localhost:8080/health
-  # -> {"status":"ok","service":"proxy-tee","headless":false,"playback":"live"}
+  # -> {"status":"ok","service":"proxy-tee","headless":false,"playback":"live","features_disabled":["feature_admin_mcp"]}
   ```
 * **MCP Gateway Status:**
   ```bash
   curl -s http://localhost:8000/health
-  # -> {"status":"ok","browser_connected":true,"tile38_connected":true,"timescaledb_connected":true}
+  # -> {"status":"ok","browser_connected":true,"tile38_connected":true,"timescaledb_connected":true,
+  #     "features":{"enabled":40,"disabled":["feature_admin_mcp"]}}
+  ```
+* **Feature Flags:**
+  ```bash
+  curl -s http://localhost:8000/api/features | jq '.features[] | select(.enabled == false) | .id'
   ```
 * **Unified Tool Registry:**
   ```bash
@@ -160,7 +173,23 @@ ORDER BY pg_total_relation_size(relid) DESC;
 
 ---
 
-## 7. Port Allocation Cheatsheet
+## 7. Running the Sidecar Unit Tests
+
+The gateway's feature-flag registry, route/tool gating and API are covered by pytest (no databases needed):
+```bash
+cd sidecar/mcp-gateway
+python -m venv .venv && . .venv/bin/activate
+pip install -r requirements.txt pytest
+python -m pytest
+```
+Type-check `proxy-tee`:
+```bash
+cd sidecar/proxy-tee && npm install && npx tsc --noEmit -p .
+```
+
+---
+
+## 8. Port Allocation Cheatsheet
 
 | Port | Service | Internal Container Port | Description |
 | :--- | :--- | :--- | :--- |

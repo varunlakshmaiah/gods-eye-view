@@ -130,3 +130,40 @@ sequenceDiagram
 * **Transient Upstream Restarts:** When keys are saved in upstream's settings modal, upstream triggers `server.restart()` with a 1-2 second connection drop. `proxy-tee` intercepts socket errors and returns `503 UPSTREAM_RESTARTING` rather than crashing or terminating connections.
 * **Headless Autonomy:** When no user browser is active, `proxy-tee` automatically steps down to Headless Mode after 60 seconds, activating an internal governor that queries flights (15s), vessels (30s), fires (30m), and satellites (6h) to prevent data gaps in the TimescaleDB archive.
 * **STDIO Bridge Isolation:** Claude Desktop connects via `docker exec -i gods-eye-view-mcp-gateway-1 python3 -m src.mcp_stdio`. All application and diagnostic logging is redirected strictly to `sys.stderr`, guaranteeing that `sys.stdout` remains pristine for JSON-RPC messages.
+* **Feature Flag Isolation:** A malformed `features.json` never flips features: both services keep the last valid catalog and report `load_error`. A missing file means every feature uses its built-in default (on, except `feature_admin_mcp`).
+
+---
+
+## 7. Feature Flag Control Plane
+
+All sidecar capabilities are gated by one shared catalog, `sidecar/config/features.json`, mounted read-write into `mcp-gateway` and read-only into `proxy-tee`.
+
+```mermaid
+flowchart LR
+    subgraph Config["sidecar/config"]
+        FJ["features.json"]
+    end
+    subgraph GW["mcp-gateway"]
+        REG["FeatureRegistry<br/>(features.py)"]
+        GATE["FeatureGateMiddleware<br/>403 for gated routes"]
+        TOOLS["MCP tool visibility"]
+        ENG["Engine lifecycle<br/>tripwire, INTSUM, CoT,<br/>Meshtastic, escort, SDR"]
+        DISP["Alert dispatcher channels"]
+    end
+    subgraph PT["proxy-tee"]
+        TSREG["FeatureRegistry<br/>(features.ts)"]
+        TAP["Data capture, polling,<br/>replay, injection, /gps, /apk"]
+    end
+    BR["copilot-bridge.js"]
+
+    FJ <-- "PUT /api/features writes · polls every 5s" --> REG
+    FJ -- "polls every 3s" --> TSREG
+    REG --> GATE & TOOLS & ENG & DISP
+    TSREG --> TAP
+    REG -- "feature_sync (WebSocket)" --> BR
+    TSREG -- "GET /__sidecar/features" --> BR
+```
+
+* **Single writer:** only `mcp-gateway` writes the file (atomic temp-file + rename, preserving the host file's mode and owner). `proxy-tee` and humans editing the file are picked up by mtime polling.
+* **Toggle API on loopback only:** `PUT /api/features/{id}` lives on the gateway port (`127.0.0.1:8000`). The LAN-facing `proxy-tee` exposes only the read-only `/__sidecar/features`.
+* **Env locks:** `SIDECAR_FEATURE_<ID>`, `SIDECAR_FEATURES_DISABLED` and `SIDECAR_FEATURES_ENABLED` override the file in both services identically; the API refuses to change locked features (`409`).

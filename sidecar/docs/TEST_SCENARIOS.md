@@ -1,6 +1,6 @@
 # Gods-Eye-View Sidecar: Verification & Test Scenarios
 
-This document outlines the **6 Core Verification Test Suites** used to validate the stability, isolation, database tiering, and AI integrations of the Gods-Eye-View Sidecar.
+This document outlines the **Core Verification Test Suites** (Suite 14 covers per-feature enablement) used to validate the stability, isolation, database tiering, and AI integrations of the Gods-Eye-View Sidecar.
 
 ---
 
@@ -405,4 +405,51 @@ This document outlines the **6 Core Verification Test Suites** used to validate 
   ```
 * **Success Criteria:** Returns `total_distance_km`, `safety_verdict` (`CLEAR`, `CAUTION`, `AVOID_RECOMMENDED`), and waypoint hazard breakdown.
 
+---
 
+## Test Suite 14: Per-Feature Enablement (Feature Flags)
+
+### Test 14.1: List Feature Flags
+* **Execution:**
+  ```bash
+  curl -s http://127.0.0.1:8000/api/features | jq '.features | length'
+  ```
+* **Success Criteria:** Returns `41`; every entry has `enabled`, `locked_by_env` and `blocked_by`.
+
+### Test 14.2: Disable a Feature at Runtime
+* **Execution:**
+  ```bash
+  curl -s -X PUT http://127.0.0.1:8000/api/features/pattern_of_life \
+    -H "Content-Type: application/json" -d '{"enabled": false}' | jq .changed
+  curl -s -o /dev/null -w '%{http_code}\n' "http://127.0.0.1:8000/api/pol/maneuvers"
+  curl -s http://127.0.0.1:8000/api/mcp/tools | jq '[.tools[].name] | index("detect_dark_contacts")'
+  ```
+* **Success Criteria:** `{"pattern_of_life": false}`, then `403`, then `null` (tool hidden). `sidecar/config/features.json` now shows `"enabled": false` for `pattern_of_life`. Re-enable with `{"enabled": true}`.
+
+### Test 14.3: Dependencies Cascade
+* **Execution:**
+  ```bash
+  curl -s -X PUT http://127.0.0.1:8000/api/features/escort_bubbles \
+    -H "Content-Type: application/json" -d '{"enabled": false}' | jq .changed
+  ```
+* **Success Criteria:** `escort_bubbles`, `escort_owntracks` and `traffic_vehicle_tagging` all become `false`; the gateway log prints `Stopped dynamic escort sentinel`; the escort HUD and bubbles disappear from the open globe.
+
+### Test 14.4: Hand-Edit Hot Reload (Both Services)
+* **Execution:** Set `"enabled": false` for `mobile_gps_page` in `sidecar/config/features.json`, wait 5 seconds, then:
+  ```bash
+  curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8080/gps
+  curl -s http://localhost:8080/__sidecar/features | jq .features.mobile_gps_page
+  ```
+* **Success Criteria:** `403` and `false`, without restarting any container.
+
+### Test 14.5: Environment Locks
+* **Execution:** Start with `SIDECAR_FEATURES_DISABLED=cot_atak docker compose -f docker-compose.sidecar.yml up -d`, then:
+  ```bash
+  curl -s -X PUT http://127.0.0.1:8000/api/features/cot_atak \
+    -H "Content-Type: application/json" -d '{"enabled": true}'
+  ```
+* **Success Criteria:** `409` with `locked by environment variable SIDECAR_FEATURES_DISABLED`; no CoT UDP packets on port 4242.
+
+### Test 14.6: Automated Unit Tests
+* **Execution:** `cd sidecar/mcp-gateway && python -m pytest`
+* **Success Criteria:** All tests pass (registry precedence, dependency cascade, persistence, hot reload, route/tool mapping, REST gating, tool hiding).

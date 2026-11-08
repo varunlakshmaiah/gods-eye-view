@@ -82,6 +82,8 @@ All 70 tools are exposed via dual transports:
 1. **Model Context Protocol (MCP)** via SSE (`/mcp/sse`) and stdio (`python -m src.mcp_stdio`) for Claude Desktop, Cursor, and Windsurf.
 2. **REST API** via HTTP `POST /api/tools/{tool_name}` for scripts, curl, or webhooks.
 
+> Each tool belongs to a feature in [`config/features.json`](../config/features.json). Tools of a disabled feature are hidden from MCP clients and return `403 feature_disabled` over REST. Two extra tools manage the flags: `list_sidecar_features` (always on) and `set_sidecar_feature` (needs `feature_admin_mcp`). See [FEATURE_FLAGS.md](./FEATURE_FLAGS.md).
+
 ### Section A: Native Sidecar Intelligence & Surveillance Tools (25 Tools)
 
 #### 1. `resolve_anchor`
@@ -490,7 +492,11 @@ sequenceDiagram
 
 | Method | Endpoint | Description | Request Body / Query Params |
 | :--- | :--- | :--- | :--- |
-| `GET` | `/health` | Gateway service health, DB connections & browser client count | None |
+| `GET` | `/health` | Gateway service health, DB connections, browser client count & disabled features | None |
+| `GET` | `/api/features` | List all feature flags with effective state, env locks and blocking dependencies | None |
+| `GET` | `/api/features/{id}` | Inspect one feature flag | None |
+| `PUT` | `/api/features/{id}` | Enable/disable a feature (persists to `features.json`; `409` if env-locked) | `{"enabled": true}` |
+| `POST` | `/api/features/reload` | Re-read `features.json` immediately | None |
 | `GET` | `/api/mcp/tools` | List all 55 tools with parameter schemas | None |
 | `POST` | `/api/tools/{tool_name}` | Generic tool execution endpoint | Dynamic JSON payload |
 | `GET` | `/api/aois` | List all active surveillance AOIs | None |
@@ -530,7 +536,9 @@ sequenceDiagram
 | `POST` | `/api/escort/query` | Spatial Q&A relative to moving member/vehicle | `{"device_id", "query_type", "category", "radius_km", "limit"}` |
 | `POST` | `/api/escort/route` | Safe route corridor hazard evaluation | `{"device_id", "dest_lat", "dest_lon", "corridor_width_km"}` |
 | `DELETE`| `/api/escort/device/{id}`| Untag and remove device bubble | None |
-| `WS` | `/ws/copilot` | Bi-directional WebSocket Co-Pilot Hub | Real-time viewport & command stream |
+| `WS` | `/ws/copilot` | Bi-directional WebSocket Co-Pilot Hub (sends `feature_sync` on connect and on every flag change) | Real-time viewport & command stream |
+
+`proxy-tee` (port 8080) also serves `GET /__sidecar/features` (read-only flag state for the browser bridge). Every route above except `/health`, `/api/features*`, `/api/mcp/tools` and `/ws/copilot` returns `403 feature_disabled` when its feature is off.
 
 ---
 
@@ -719,3 +727,29 @@ With `v1.12.0-sidecar`, the Sentinel is no longer pinned to a single stationary 
    ```
    Samples waypoints along the route, scans for intersecting high-hazard dams, military restricted zones, or active fires, and provides a clear safety clearance verdict (`CLEAR`, `CAUTION`, `AVOID_RECOMMENDED`).
 
+---
+
+## 10. Per-Feature Enablement
+
+Every capability in this catalog has an on/off switch in [`sidecar/config/features.json`](../config/features.json) (41 flags across ingestion, storage, browser, mobile, core, alerting, notifications, analysis, field links and escort). Changes are picked up live by both `proxy-tee` and `mcp-gateway`; engines start and stop, tools appear and disappear, and the globe hides the matching visuals.
+
+| Capability (section above) | Feature flag(s) |
+| :--- | :--- |
+| Data capture & 4D archive | `ingest_flights`, `ingest_military`, `ingest_vessels`, `ingest_wildfires`, `ingest_satellite_tles`, `history_archive` |
+| 24/7 background polling | `headless_keepalive` |
+| Historical replay | `playback_replay` |
+| Co-Pilot bridge & cockpit control | `ui_bridge_injection`, `visual_cockpit` |
+| Core spatial tools | `anchor_resolution`, `scene_context`, `entity_trajectory`, `satellite_passes`, `static_infrastructure` |
+| Upstream federated tools | `upstream_tool_federation` |
+| Tripwires, AOIs & alerts | `tripwire_sentinel`, `aoi_management`, `alert_api` |
+| Alert channels | `notify_browser_hud`, `notify_desktop`, `notify_telegram`, `notify_discord`, `notify_slack`, `notify_alert_log` |
+| INTSUM dossiers | `intsum_reports`, `intsum_schedule` |
+| CPA / TCPA | `kinematics_cpa` |
+| Pattern-of-life | `pattern_of_life` |
+| Radar horizons | `radar_horizons` |
+| SDR, ATAK, Meshtastic | `sdr_ingest`, `cot_atak`, `meshtastic_relay` |
+| Escort bubbles | `escort_bubbles`, `escort_owntracks`, `traffic_vehicle_tagging` |
+| Mobile GPS & HTTPS | `mobile_gps_page`, `android_apk_download`, `https_listener` |
+| MCP transport & admin | `mcp_sse_transport`, `feature_admin_mcp` |
+
+Full reference: [FEATURE_FLAGS.md](./FEATURE_FLAGS.md).

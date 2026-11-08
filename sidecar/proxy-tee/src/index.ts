@@ -17,6 +17,7 @@ import {
   normalizeFirms,
   normalizeCelestrakTle,
 } from './normalizer.js';
+import { features } from './features.js';
 
 dotenv.config();
 
@@ -32,6 +33,31 @@ const playbackController = new PlaybackController();
 const heartbeatManager = new HeartbeatManager(UPSTREAM_URL, tile38Sink, timescaleSink);
 
 heartbeatManager.start();
+features.watch();
+
+function featureDisabled(res: Response, id: string): void {
+  res.status(403).json({
+    error: 'feature_disabled',
+    feature: id,
+    message: `Sidecar feature '${id}' is disabled (see sidecar/config/features.json or SIDECAR_FEATURE_* env).`,
+  });
+}
+
+function disabledFeatures(): string[] {
+  return Object.entries(features.snapshot())
+    .filter(([, on]) => !on)
+    .map(([id]) => id)
+    .sort();
+}
+
+// Upstream API routes copied into storage, and the feature that gates each.
+const TAP_FEATURES: Array<[string, string]> = [
+  ['/api/flights', 'ingest_flights'],
+  ['/api/military', 'ingest_military'],
+  ['/api/vessels', 'ingest_vessels'],
+  ['/api/firms', 'ingest_wildfires'],
+  ['/api/celestrak/', 'ingest_satellite_tles'],
+];
 
 // ----------------------------------------------------------------------------
 // 1. Sidecar Status & Internal Routes
@@ -43,7 +69,14 @@ app.get('/health', (_req: Request, res: Response) => {
     uptime: process.uptime(),
     headless: heartbeatManager.isHeadlessMode(),
     playback: playbackController.getMode(),
+    features_disabled: disabledFeatures(),
   });
+});
+
+// Read-only feature state for the injected UI bridge (toggle via mcp-gateway PUT /api/features/{id}).
+app.get('/__sidecar/features', (_req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ features: features.snapshot(), load_error: features.loadError });
 });
 
 app.get('/__sidecar/status', (_req: Request, res: Response) => {
@@ -51,10 +84,15 @@ app.get('/__sidecar/status', (_req: Request, res: Response) => {
     upstream: UPSTREAM_URL,
     headless: heartbeatManager.isHeadlessMode(),
     playback: playbackController.getMode(),
+    features_disabled: disabledFeatures(),
   });
 });
 
 app.all(['/__sidecar/playback', '/api/replay'], express.json(), (req: Request, res: Response) => {
+  if (!features.isEnabled('playback_replay')) {
+    featureDisabled(res, 'playback_replay');
+    return;
+  }
   if (req.method === 'GET') {
     res.json({ status: 'ok', current: playbackController.getMode() });
     return;
@@ -70,6 +108,10 @@ app.all(['/__sidecar/playback', '/api/replay'], express.json(), (req: Request, r
 
 // Serve the Co-Pilot bridge script dynamically
 app.get('/__sidecar/copilot-bridge.js', (_req: Request, res: Response) => {
+  if (!features.isEnabled('ui_bridge_injection')) {
+    res.status(404).type('application/javascript').send('// ui_bridge_injection is disabled');
+    return;
+  }
   const possiblePaths = [
     '/app/ui-bridge/copilot-bridge.js',
     path.resolve(process.cwd(), 'ui-bridge/copilot-bridge.js'),
@@ -97,6 +139,10 @@ app.get('/__sidecar/copilot-bridge.js', (_req: Request, res: Response) => {
 
 // Serve the Mobile GPS Transmitter web app
 app.get(['/gps', '/mobile-gps'], (_req: Request, res: Response) => {
+  if (!features.isEnabled('mobile_gps_page')) {
+    featureDisabled(res, 'mobile_gps_page');
+    return;
+  }
   const possiblePaths = [
     '/app/ui-bridge/gps.html',
     path.resolve(process.cwd(), 'ui-bridge/gps.html'),
@@ -120,6 +166,10 @@ app.get(['/gps', '/mobile-gps'], (_req: Request, res: Response) => {
 
 // Serve the Native Android APK download
 app.get(['/sentinel-gps.apk', '/download/apk', '/apk'], (_req: Request, res: Response) => {
+  if (!features.isEnabled('android_apk_download')) {
+    featureDisabled(res, 'android_apk_download');
+    return;
+  }
   const possiblePaths = [
     '/app/ui-bridge/sentinel-gps.apk',
     path.resolve(process.cwd(), 'ui-bridge/sentinel-gps.apk'),
@@ -147,7 +197,11 @@ app.get(['/sentinel-gps.apk', '/download/apk', '/apk'], (_req: Request, res: Res
 app.use(async (req: Request, res: Response, next: NextFunction) => {
   heartbeatManager.recordClientActivity();
 
-  if (req.method === 'GET' && (req.path === '/api/flights' || req.path === '/api/vessels')) {
+  if (
+    req.method === 'GET' &&
+    (req.path === '/api/flights' || req.path === '/api/vessels') &&
+    features.isEnabled('playback_replay')
+  ) {
     try {
       const handled = await playbackController.handleReplay(req, res);
       if (handled) return;
@@ -219,6 +273,7 @@ app.use(
 
         // Case A: Inject Co-Pilot script into HTML
         if (contentType.includes('text/html') || url === '/' || url.endsWith('.html')) {
+          if (!features.isEnabled('ui_bridge_injection')) return responseBuffer;
           let html = responseBuffer.toString('utf-8');
           const scriptTag = `<script src="/__sidecar/copilot-bridge.js" defer></script>`;
           if (!html.includes(scriptTag)) {
@@ -228,7 +283,8 @@ app.use(
         }
 
         // Case B: Tap API Responses asynchronously
-        if (url.startsWith('/api/')) {
+        const tapFeature = TAP_FEATURES.find(([prefix]) => url.startsWith(prefix))?.[1];
+        if (tapFeature && features.isEnabled(tapFeature)) {
           // Asynchronous non-blocking processing
           setImmediate(async () => {
             try {
@@ -319,7 +375,9 @@ try {
   const certPath = possibleCertPaths.find((p) => fs.existsSync(p));
   const keyPath = possibleKeyPaths.find((p) => fs.existsSync(p));
 
-  if (certPath && keyPath) {
+  if (!features.isEnabled('https_listener')) {
+    console.log(`[ProxyTee] https_listener disabled; HTTPS proxy not started.`);
+  } else if (certPath && keyPath) {
     const cert = fs.readFileSync(certPath);
     const key = fs.readFileSync(keyPath);
     https.createServer({ key, cert }, app).listen(HTTPS_PORT, '0.0.0.0', () => {

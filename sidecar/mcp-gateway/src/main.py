@@ -31,6 +31,8 @@ from .sdr.engine import sdr_engine
 from .cot.engine import cot_engine
 from .meshtastic.engine import meshtastic_engine
 from .escort.engine import escort_engine
+from .features import feature_registry, FeatureLockedError
+from .feature_gates import FeatureGateMiddleware, feature_for_tool
 
 # ----------------------------------------------------------------------------
 # Lifespan Lifecycle
@@ -45,19 +47,125 @@ async def periodic_intsum_briefing():
             print(f"[IntsumEngine] Error in periodic INTSUM dispatch: {e}")
         await asyncio.sleep(43200)  # 12 hours
 
+# ----------------------------------------------------------------------------
+# Feature Flag Lifecycle
+# ----------------------------------------------------------------------------
+# Features that own a background engine or task and must be started/stopped on toggle.
+LIFECYCLE_FEATURES = (
+    "upstream_tool_federation",
+    "tripwire_sentinel",
+    "intsum_schedule",
+    "cot_atak",
+    "meshtastic_relay",
+    "escort_bubbles",
+    "sdr_ingest",
+)
+
+_feature_tasks: Dict[str, asyncio.Task] = {}
+NATIVE_TOOLS: Dict[str, Any] = {}
+
+
+def _start_task(key: str, coro_factory) -> None:
+    task = _feature_tasks.get(key)
+    if task and not task.done():
+        return
+    _feature_tasks[key] = asyncio.create_task(coro_factory())
+
+
+def _cancel_task(key: str) -> None:
+    task = _feature_tasks.pop(key, None)
+    if task and not task.done():
+        task.cancel()
+
+
+def sync_tool_visibility() -> None:
+    """Hide MCP tools whose feature is disabled; restore them when re-enabled."""
+    tools = mcp_server._tool_manager._tools
+    for name, tool in NATIVE_TOOLS.items():
+        fid = feature_for_tool(name)
+        if fid is None or feature_registry.is_enabled(fid):
+            tools[name] = tool
+        else:
+            tools.pop(name, None)
+    if not feature_registry.is_enabled("upstream_tool_federation"):
+        for name in [n for n in tools if n not in NATIVE_TOOLS]:
+            tools.pop(name, None)
+
+
+async def _federate_upstream():
+    upstream_url = os.getenv("UPSTREAM_URL", "http://127.0.0.1:4173")
+    await poll_and_federate(mcp_server, f"{upstream_url}/mcp")
+    sync_tool_visibility()
+
+
+async def apply_feature_state(fid: str, enabled: bool) -> None:
+    if fid == "upstream_tool_federation":
+        if enabled:
+            _start_task(fid, _federate_upstream)
+        else:
+            _cancel_task(fid)
+    elif fid == "tripwire_sentinel":
+        if enabled:
+            _start_task(fid, tripwire_engine.start)
+        else:
+            tripwire_engine.stop()
+            _cancel_task(fid)
+    elif fid == "intsum_schedule":
+        if enabled:
+            _start_task(fid, periodic_intsum_briefing)
+        else:
+            _cancel_task(fid)
+    elif fid in ("cot_atak", "meshtastic_relay", "escort_bubbles"):
+        engine = {"cot_atak": cot_engine, "meshtastic_relay": meshtastic_engine, "escort_bubbles": escort_engine}[fid]
+        if enabled:
+            await engine.start()
+        else:
+            engine.stop()
+    elif fid == "sdr_ingest" and not enabled:
+        # SDR is started on demand via start_sdr_stream; only stop it here.
+        sdr_engine.stop()
+
+
+async def apply_feature_changes(changes: Dict[str, bool]) -> None:
+    if not changes:
+        return
+    print(f"[Features] Applying changes: {changes}")
+    for fid, enabled in changes.items():
+        if fid in LIFECYCLE_FEATURES:
+            try:
+                await apply_feature_state(fid, enabled)
+            except Exception as e:
+                print(f"[Features] Failed to apply '{fid}'={enabled}: {e}")
+    sync_tool_visibility()
+    await hub.broadcast_json({"type": "feature_sync", "features": feature_registry.snapshot()})
+
+
+async def watch_feature_file():
+    """Hot-reload features.json when it is edited by hand or by another service."""
+    interval = float(os.getenv("SIDECAR_FEATURES_RELOAD_SEC", "5"))
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            await apply_feature_changes(feature_registry.reload_if_changed())
+        except Exception as e:
+            print(f"[Features] Reload error: {e}")
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("[McpGateway] Initializing router connections...")
     await router.initialize()
-    upstream_url = os.getenv("UPSTREAM_URL", "http://127.0.0.1:4173")
-    asyncio.create_task(poll_and_federate(mcp_server, f"{upstream_url}/mcp"))
-    asyncio.create_task(tripwire_engine.start())
-    asyncio.create_task(periodic_intsum_briefing())
-    asyncio.create_task(cot_engine.start())
-    asyncio.create_task(meshtastic_engine.start())
-    asyncio.create_task(escort_engine.start())
+    if feature_registry.load_error:
+        print(f"[Features] {feature_registry.load_error}")
+    disabled = [fid for fid, on in feature_registry.snapshot().items() if not on]
+    print(f"[Features] Loaded {feature_registry.path}; disabled: {disabled or 'none'}")
+    for fid in LIFECYCLE_FEATURES:
+        if feature_registry.is_enabled(fid):
+            await apply_feature_state(fid, True)
+    _start_task("feature_watcher", watch_feature_file)
     yield
     print("[McpGateway] Closing router connections...")
+    for key in list(_feature_tasks):
+        _cancel_task(key)
     escort_engine.stop()
     meshtastic_engine.stop()
     cot_engine.stop()
@@ -71,6 +179,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Added before CORS so 403 feature-disabled responses still carry CORS headers.
+app.add_middleware(FeatureGateMiddleware, registry=feature_registry)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -511,13 +621,63 @@ async def tool_scan_proximity_conflicts(
 # ----------------------------------------------------------------------------
 @app.get("/health")
 async def health():
+    snapshot = feature_registry.snapshot()
     return {
         "service": "mcp-gateway",
         "status": "ok",
         "browser_connected": hub.is_browser_connected(),
         "tile38_connected": router.redis is not None,
         "timescaledb_connected": router.pg_pool is not None,
+        "features": {
+            "enabled": sum(1 for on in snapshot.values() if on),
+            "disabled": sorted(fid for fid, on in snapshot.items() if not on),
+        },
     }
+
+# ----------------------------------------------------------------------------
+# Feature Flag API
+# ----------------------------------------------------------------------------
+class FeatureToggleRequest(BaseModel):
+    enabled: bool = Field(..., description="Desired state for the feature")
+
+
+async def set_feature(feature_id: str, enabled: bool) -> Dict[str, Any]:
+    if not feature_registry.known(feature_id):
+        raise HTTPException(status_code=404, detail=f"Unknown feature '{feature_id}'")
+    try:
+        changes = feature_registry.set_enabled(feature_id, enabled)
+    except FeatureLockedError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"Could not write {feature_registry.path}: {e}")
+    await apply_feature_changes(changes)
+    info = feature_registry.describe(feature_id)
+    return {"feature": info, "changed": changes, "restart_required": info["restart_required"]}
+
+
+@app.get("/api/features")
+async def api_list_features():
+    return {
+        "file": feature_registry.path,
+        "load_error": feature_registry.load_error,
+        "features": feature_registry.list(),
+    }
+
+@app.post("/api/features/reload")
+async def api_reload_features():
+    changes = feature_registry.load()
+    await apply_feature_changes(changes)
+    return {"changed": changes, "load_error": feature_registry.load_error}
+
+@app.get("/api/features/{feature_id}")
+async def api_get_feature(feature_id: str):
+    if not feature_registry.known(feature_id):
+        raise HTTPException(status_code=404, detail=f"Unknown feature '{feature_id}'")
+    return feature_registry.describe(feature_id)
+
+@app.put("/api/features/{feature_id}")
+async def api_set_feature(feature_id: str, req: FeatureToggleRequest):
+    return await set_feature(feature_id, req.enabled)
 
 @app.post("/api/tools/resolve_anchor")
 async def api_resolve_anchor(req: ResolveAnchorRequest):
@@ -843,17 +1003,24 @@ async def websocket_copilot_endpoint(websocket: WebSocket):
     try:
         import json
         await websocket.send_text(json.dumps({
-            "type": "aoi_sync",
-            "aois": tripwire_engine.get_aois()
+            "type": "feature_sync",
+            "features": feature_registry.snapshot()
         }))
-        await websocket.send_text(json.dumps({
-            "type": "escort_sync",
-            "devices": escort_engine.list_devices()
-        }))
-        await websocket.send_text(json.dumps({
-            "type": "radar_sync",
-            "stations": radar_engine.get_stations()
-        }))
+        if feature_registry.is_enabled("aoi_management"):
+            await websocket.send_text(json.dumps({
+                "type": "aoi_sync",
+                "aois": tripwire_engine.get_aois()
+            }))
+        if feature_registry.is_enabled("escort_bubbles"):
+            await websocket.send_text(json.dumps({
+                "type": "escort_sync",
+                "devices": escort_engine.list_devices()
+            }))
+        if feature_registry.is_enabled("radar_horizons"):
+            await websocket.send_text(json.dumps({
+                "type": "radar_sync",
+                "stations": radar_engine.get_stations()
+            }))
     except Exception:
         pass
     try:
@@ -1373,5 +1540,28 @@ async def evaluate_escort_route(
     import json
     return json.dumps(res, indent=2)
 
+@mcp_server.tool()
+async def list_sidecar_features() -> str:
+    """List every sidecar feature flag with its effective state, dependencies, env locks and description."""
+    import json
+    return json.dumps(feature_registry.list(), indent=2)
+
+@mcp_server.tool()
+async def set_sidecar_feature(feature_id: str, enabled: bool) -> str:
+    """Enable or disable a sidecar feature by ID (see list_sidecar_features). Only available when feature_admin_mcp is on."""
+    import json
+    try:
+        res = await set_feature(feature_id, enabled)
+    except HTTPException as e:
+        res = {"error": e.detail, "status": e.status_code}
+    return json.dumps(res, indent=2)
+
+# Snapshot every native tool so disabled ones can be hidden and later restored.
+NATIVE_TOOLS.update(mcp_server._tool_manager._tools)
+sync_tool_visibility()
+
 # Mount SSE app on FastAPI: exposes /mcp/sse and /mcp/messages
-app.mount("/mcp", mcp_server.sse_app())
+if feature_registry.is_enabled("mcp_sse_transport"):
+    app.mount("/mcp", mcp_server.sse_app())
+else:
+    print("[Features] mcp_sse_transport disabled; /mcp/sse not mounted.")

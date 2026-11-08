@@ -1,0 +1,263 @@
+{
+  "schema_version": 1,
+  "description": "Sidecar feature flags. Set \"enabled\" to true or false per feature. Both proxy-tee and mcp-gateway hot-reload this file; see sidecar/docs/FEATURE_FLAGS.md.",
+  "features": {
+    "ingest_flights": {
+      "enabled": true,
+      "service": "proxy-tee",
+      "category": "ingestion",
+      "description": "Copy /api/flights responses (civil aircraft) into Tile38 and TimescaleDB."
+    },
+    "ingest_military": {
+      "enabled": true,
+      "service": "proxy-tee",
+      "category": "ingestion",
+      "description": "Copy /api/military responses (military aircraft) into Tile38 and TimescaleDB."
+    },
+    "ingest_vessels": {
+      "enabled": true,
+      "service": "proxy-tee",
+      "category": "ingestion",
+      "description": "Copy /api/vessels responses (AIS ships) into Tile38 and TimescaleDB."
+    },
+    "ingest_wildfires": {
+      "enabled": true,
+      "service": "proxy-tee",
+      "category": "ingestion",
+      "description": "Copy /api/firms responses (NASA FIRMS fire hotspots) into Tile38 and TimescaleDB."
+    },
+    "ingest_satellite_tles": {
+      "enabled": true,
+      "service": "proxy-tee",
+      "category": "ingestion",
+      "description": "Archive /api/celestrak/* TLE sets into tle_archive (needed by satellite passes and scene context)."
+    },
+    "history_archive": {
+      "enabled": true,
+      "service": "proxy-tee",
+      "category": "storage",
+      "description": "Write telemetry and TLEs to TimescaleDB. When off, only the live Tile38 tier is updated."
+    },
+    "headless_keepalive": {
+      "enabled": true,
+      "service": "proxy-tee",
+      "category": "ingestion",
+      "description": "Poll upstream feeds in the background when no browser has been active for 60 seconds."
+    },
+    "playback_replay": {
+      "enabled": true,
+      "service": "proxy-tee",
+      "category": "storage",
+      "description": "Historical replay switch (/__sidecar/playback, /api/replay) that serves flights and vessels from TimescaleDB."
+    },
+    "ui_bridge_injection": {
+      "enabled": true,
+      "service": "proxy-tee",
+      "category": "browser",
+      "description": "Inject copilot-bridge.js into the upstream HTML page so the globe connects to the gateway."
+    },
+    "mobile_gps_page": {
+      "enabled": true,
+      "service": "proxy-tee",
+      "category": "mobile",
+      "description": "Serve the mobile browser GPS transmitter page at /gps and /mobile-gps."
+    },
+    "android_apk_download": {
+      "enabled": true,
+      "service": "proxy-tee",
+      "category": "mobile",
+      "description": "Serve the Sentinel GPS Android APK at /apk, /download/apk and /sentinel-gps.apk."
+    },
+    "https_listener": {
+      "enabled": true,
+      "service": "proxy-tee",
+      "category": "mobile",
+      "restart_required": true,
+      "description": "Start the HTTPS listener on PROXY_HTTPS_PORT (8443) for mobile GPS secure contexts."
+    },
+    "mcp_sse_transport": {
+      "enabled": true,
+      "service": "mcp-gateway",
+      "category": "core",
+      "restart_required": true,
+      "description": "Expose the MCP server over SSE at /mcp/sse. REST /api/tools/* stays available."
+    },
+    "upstream_tool_federation": {
+      "enabled": true,
+      "service": "mcp-gateway",
+      "category": "core",
+      "description": "Discover and re-expose the upstream God's Eye View MCP tools through the gateway."
+    },
+    "anchor_resolution": {
+      "enabled": true,
+      "service": "mcp-gateway",
+      "category": "core",
+      "description": "resolve_anchor: place names, airport codes, callsigns and MMSIs to coordinates."
+    },
+    "scene_context": {
+      "enabled": true,
+      "service": "mcp-gateway",
+      "category": "core",
+      "description": "get_scene_context: live or historical contact roster, environment digest and overhead satellites."
+    },
+    "entity_trajectory": {
+      "enabled": true,
+      "service": "mcp-gateway",
+      "category": "core",
+      "description": "get_entity_trajectory: 4D path reconstruction from TimescaleDB."
+    },
+    "satellite_passes": {
+      "enabled": true,
+      "service": "mcp-gateway",
+      "category": "core",
+      "description": "predict_satellite_passes: headless SGP4 pass prediction."
+    },
+    "static_infrastructure": {
+      "enabled": true,
+      "service": "mcp-gateway",
+      "category": "core",
+      "description": "find_static_infrastructure: PostGIS lookup of datacenters, dams, cables and bases."
+    },
+    "visual_cockpit": {
+      "enabled": true,
+      "service": "mcp-gateway",
+      "category": "browser",
+      "description": "control_visual_cockpit: camera fly-to, entity selection, layer toggles and replay in the open globe."
+    },
+    "tripwire_sentinel": {
+      "enabled": true,
+      "service": "mcp-gateway",
+      "category": "alerting",
+      "description": "20-second tripwire loop: emergency squawks, AOI incursions, cable anchor drag, dark contacts."
+    },
+    "aoi_management": {
+      "enabled": true,
+      "service": "mcp-gateway",
+      "category": "alerting",
+      "description": "Area-of-interest API and tools, plus 3D AOI perimeter rings in the globe."
+    },
+    "alert_api": {
+      "enabled": true,
+      "service": "mcp-gateway",
+      "category": "alerting",
+      "description": "get_active_alerts, test_tactical_alert and /api/alerts/*."
+    },
+    "notify_browser_hud": {
+      "enabled": true,
+      "service": "mcp-gateway",
+      "category": "notifications",
+      "description": "Show alert banners on the Cesium globe."
+    },
+    "notify_desktop": {
+      "enabled": true,
+      "service": "mcp-gateway",
+      "category": "notifications",
+      "description": "Show alerts as native browser desktop notifications."
+    },
+    "notify_telegram": {
+      "enabled": true,
+      "service": "mcp-gateway",
+      "category": "notifications",
+      "description": "Send alerts to Telegram (credentials in watchlists.json or TELEGRAM_* env vars)."
+    },
+    "notify_discord": {
+      "enabled": true,
+      "service": "mcp-gateway",
+      "category": "notifications",
+      "description": "Send alerts to a Discord webhook (URL in watchlists.json or DISCORD_WEBHOOK_URL)."
+    },
+    "notify_slack": {
+      "enabled": true,
+      "service": "mcp-gateway",
+      "category": "notifications",
+      "description": "Send alerts to a Slack webhook (URL in watchlists.json or SLACK_WEBHOOK_URL)."
+    },
+    "notify_alert_log": {
+      "enabled": true,
+      "service": "mcp-gateway",
+      "category": "notifications",
+      "description": "Persist every alert to the tactical_alerts table."
+    },
+    "intsum_reports": {
+      "enabled": true,
+      "service": "mcp-gateway",
+      "category": "analysis",
+      "description": "Generate and dispatch INTSUM intelligence summaries on demand."
+    },
+    "intsum_schedule": {
+      "enabled": true,
+      "service": "mcp-gateway",
+      "category": "analysis",
+      "requires": [
+        "intsum_reports"
+      ],
+      "description": "Automatically dispatch an INTSUM for Bangalore every 12 hours."
+    },
+    "kinematics_cpa": {
+      "enabled": true,
+      "service": "mcp-gateway",
+      "category": "analysis",
+      "description": "Closest point of approach (CPA/TCPA) between contacts and airspace conflict scans."
+    },
+    "pattern_of_life": {
+      "enabled": true,
+      "service": "mcp-gateway",
+      "category": "analysis",
+      "description": "Dark-contact (transponder silence) and manoeuvre anomaly detection."
+    },
+    "radar_horizons": {
+      "enabled": true,
+      "service": "mcp-gateway",
+      "category": "analysis",
+      "description": "Radar line-of-sight coverage tools and 3D radar domes in the globe."
+    },
+    "sdr_ingest": {
+      "enabled": true,
+      "service": "mcp-gateway",
+      "category": "field_links",
+      "description": "RTL-SDR ADS-B/AIS ingestion engine, API and tools."
+    },
+    "cot_atak": {
+      "enabled": true,
+      "service": "mcp-gateway",
+      "category": "field_links",
+      "description": "Cursor-on-Target UDP broadcaster to ATAK/WinTAK/iTAK, including alert forwarding."
+    },
+    "meshtastic_relay": {
+      "enabled": true,
+      "service": "mcp-gateway",
+      "category": "field_links",
+      "description": "Meshtastic LoRa mesh relay, API and tools, including alert forwarding."
+    },
+    "escort_bubbles": {
+      "enabled": true,
+      "service": "mcp-gateway",
+      "category": "escort",
+      "description": "Escort / guardian bubbles: engine, API, tools, globe bubbles and HUD."
+    },
+    "escort_owntracks": {
+      "enabled": true,
+      "service": "mcp-gateway",
+      "category": "escort",
+      "requires": [
+        "escort_bubbles"
+      ],
+      "description": "OwnTracks location webhook at /api/escort/owntracks."
+    },
+    "traffic_vehicle_tagging": {
+      "enabled": true,
+      "service": "mcp-gateway",
+      "category": "escort",
+      "requires": [
+        "escort_bubbles"
+      ],
+      "description": "tag_traffic_vehicle: follow a live TomTom traffic vehicle with an escort bubble."
+    },
+    "feature_admin_mcp": {
+      "enabled": false,
+      "service": "mcp-gateway",
+      "category": "core",
+      "description": "Let AI assistants toggle features through the set_sidecar_feature MCP tool."
+    }
+  }
+}

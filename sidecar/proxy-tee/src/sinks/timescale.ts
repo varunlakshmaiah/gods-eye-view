@@ -1,5 +1,6 @@
 import pg from 'pg';
 import { CanonicalTelemetryRecord, CanonicalTleRecord } from '../normalizer.js';
+import { features } from '../features.js';
 
 const { Pool } = pg;
 
@@ -52,7 +53,7 @@ export class TimescaleSink {
   }
 
   enqueue(records: CanonicalTelemetryRecord[]): void {
-    if (records.length === 0) return;
+    if (records.length === 0 || !features.isEnabled('history_archive')) return;
     this.buffer.push(...records);
 
     if (this.buffer.length >= this.maxBufferSize) {
@@ -63,7 +64,7 @@ export class TimescaleSink {
   }
 
   enqueueTles(records: CanonicalTleRecord[]): void {
-    if (records.length === 0) return;
+    if (records.length === 0 || !features.isEnabled('history_archive')) return;
     this.tleBuffer.push(...records);
   }
 

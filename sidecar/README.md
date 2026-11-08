@@ -14,6 +14,8 @@ Comprehensive technical guides are available in the [`docs/`](./docs) directory:
 * 📐 **[Technical Design Specifications (DESIGN.md)](./docs/DESIGN.md):** Dynamic MCP tool reflection, multi-tier spatial storage, SGP4 orbital mechanics, and WebSocket bridge.
 * 🛠️ **[Build & Deployment Guide (BUILD_AND_DEPLOYMENT.md)](./docs/BUILD_AND_DEPLOYMENT.md):** Step-by-step setup, container fleet operations, Claude Desktop integration, and PostGIS infrastructure seeding.
 * 🧪 **[Verification & Test Scenarios (TEST_SCENARIOS.md)](./docs/TEST_SCENARIOS.md):** 6 end-to-end verification test suites covering isolation, geofencing, headless mode, cockpit control, and Claude STDIO.
+* 🎚️ **[Feature Flags (FEATURE_FLAGS.md)](./docs/FEATURE_FLAGS.md):** Enable or disable each sidecar feature on its own through `config/features.json`, the `/api/features` API, or environment variables.
+* 🗺️ **[Suggested Features & Optimizations (ROADMAP.md)](./docs/ROADMAP.md):** Prioritized fixes, performance work, security hardening, and new feature proposals.
 
 ---
 
@@ -89,6 +91,21 @@ Open your browser to:
 **`http://localhost:8080`**
 
 *(Note: Navigate to the `proxy-tee` port `8080`, not `4173`. The proxy transparently renders the upstream app while injecting the Co-Pilot bridge and tapping live telemetry into Tile38 and TimescaleDB).*
+
+### Step 4 (optional): Choose Which Features Run
+Every feature can be switched on or off in [`config/features.json`](./config/features.json). Both services pick up edits within a few seconds, with no restart needed (except `https_listener` and `mcp_sse_transport`).
+```bash
+# See what is enabled
+curl -s http://127.0.0.1:8000/api/features | jq '.features[] | {id, enabled}'
+
+# Turn the ATAK broadcaster off (saved to features.json)
+curl -s -X PUT http://127.0.0.1:8000/api/features/cot_atak \
+  -H "Content-Type: application/json" -d '{"enabled": false}'
+
+# Or force features off at startup
+SIDECAR_FEATURES_DISABLED=cot_atak,meshtastic_relay docker compose -f docker-compose.sidecar.yml up -d
+```
+Disabled features return `403 feature_disabled` on their REST routes, their MCP tools are hidden, their background engines stop, and their visuals are hidden in the globe. See [FEATURE_FLAGS.md](./docs/FEATURE_FLAGS.md) for the full catalog.
 
 ---
 
@@ -320,7 +337,11 @@ curl -X GET http://localhost:8000/api/sdr/contacts
 - **`show_in_gods_eye_view`**: Live 3D Cesium camera and layer positioning with direct browser links.
 - **`get_earthquakes`**, **`get_weather`**, **`get_weather_radar`**, **`get_flights`**, **`get_ships`**, **`get_satellites`**, **`get_wildfires`**, **`get_air_quality`**, **`get_cctv`**, and more.
 
-All **70 tools** (40 Native Sidecar + 30 Upstream Federated) can be invoked via standard HTTP `POST /api/tools/{tool_name}` or directly through Claude Desktop / Cursor / Windsurf via MCP.
+### 30. Feature Flag Tools
+- **`list_sidecar_features`**: List every feature with its effective state, dependencies and env locks. Always available.
+- **`set_sidecar_feature`**: Enable or disable a feature by ID. Hidden unless the `feature_admin_mcp` feature is on (off by default).
+
+All **70 tools** (40 Native Sidecar + 30 Upstream Federated) can be invoked via standard HTTP `POST /api/tools/{tool_name}` or directly through Claude Desktop / Cursor / Windsurf via MCP. Tools belonging to a disabled feature are hidden from the tool list and return `403` over REST, so the available count depends on `config/features.json`.
 
 ---
 
@@ -355,6 +376,8 @@ Once connected, Claude Desktop will automatically see all **70 tools** (40 Sidec
 When no browser sessions are open, `proxy-tee` automatically enters **Headless Mode** after 60 seconds of inactivity. An internal keep-alive cron periodically polls upstream feeds at safe intervals (Flights: 15s, Vessels: 30s, FIRMS: 30m, CelesTrak: 6h) respecting upstream rate-limit governors.
 
 This ensures Tile38 and TimescaleDB maintain a continuous, 24/7 spatio-temporal archive even when no user has the browser open.
+
+Background polling is controlled by the `headless_keepalive` feature, and each layer by its `ingest_*` feature (e.g. turn off `ingest_vessels` to stop both capturing and polling ships). `history_archive` turns TimescaleDB writes on or off independently of the live Tile38 tier.
 
 ---
 

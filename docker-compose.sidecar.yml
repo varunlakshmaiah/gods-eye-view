@@ -63,9 +63,13 @@ services:
       - TILE38_PORT=9851
       - DATABASE_URL=postgresql://postgres:postgres@timescaledb:5432/gods_eye_sidecar
       - HEADLESS_ENABLED=true
+      - SIDECAR_FEATURES_FILE=/app/config/features.json
+      - SIDECAR_FEATURES_DISABLED=${SIDECAR_FEATURES_DISABLED:-}
+      - SIDECAR_FEATURES_ENABLED=${SIDECAR_FEATURES_ENABLED:-}
     volumes:
       - ./sidecar/ui-bridge:/app/ui-bridge:ro
       - ./sidecar/proxy-tee/certs:/app/certs:ro
+      - ./sidecar/config:/app/config:ro
     networks:
       sidecar_net:
         ipv4_address: 172.28.0.10
@@ -87,6 +91,9 @@ services:
       - UPSTREAM_URL=http://127.0.0.1:4173
       - MCP_GATEWAY_PORT=8000
       - MCP_GATEWAY_HOST=0.0.0.0
+      - SIDECAR_FEATURES_FILE=/app/config/features.json
+      - SIDECAR_FEATURES_DISABLED=${SIDECAR_FEATURES_DISABLED:-}
+      - SIDECAR_FEATURES_ENABLED=${SIDECAR_FEATURES_ENABLED:-}
     depends_on:
       - upstream
       - tile38

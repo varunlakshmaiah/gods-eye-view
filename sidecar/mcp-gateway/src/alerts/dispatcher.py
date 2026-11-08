@@ -16,6 +16,7 @@ from typing import Optional, Dict, Any, List
 
 from ..ws_copilot import hub
 from ..router import router
+from ..features import feature_registry
 
 
 @dataclass
@@ -74,21 +75,24 @@ class AlertDispatcher:
             "db_logged": False,
         }
 
-        # 1. Dispatch to Browser HUD & macOS Desktop Notification
-        try:
-            await hub.broadcast_json({
-                "type": "tactical_alert",
-                "alert": alert.to_dict()
-            })
-            results["browser_hud"] = True
-        except Exception as e:
-            print(f"[AlertDispatcher] Browser HUD dispatch error: {e}")
+        enabled = feature_registry.is_enabled
+
+        # 1. Browser HUD banner & desktop notification (the bridge applies each flag)
+        if enabled("notify_browser_hud") or enabled("notify_desktop"):
+            try:
+                await hub.broadcast_json({
+                    "type": "tactical_alert",
+                    "alert": alert.to_dict()
+                })
+                results["browser_hud"] = True
+            except Exception as e:
+                print(f"[AlertDispatcher] Browser HUD dispatch error: {e}")
 
         # 2. Dispatch to Telegram
         tg_cfg = cfg.get("telegram", {})
         tg_token = os.environ.get("TELEGRAM_BOT_TOKEN") or tg_cfg.get("bot_token")
         tg_chat_id = os.environ.get("TELEGRAM_CHAT_ID") or tg_cfg.get("chat_id")
-        if (tg_cfg.get("enabled", False) or os.environ.get("TELEGRAM_BOT_TOKEN")) and tg_token and tg_chat_id:
+        if enabled("notify_telegram") and (tg_cfg.get("enabled", False) or os.environ.get("TELEGRAM_BOT_TOKEN")) and tg_token and tg_chat_id:
             try:
                 results["telegram"] = await self._send_telegram(tg_token, tg_chat_id, alert)
             except Exception as e:
@@ -97,7 +101,7 @@ class AlertDispatcher:
         # 3. Dispatch to Discord Webhook
         dc_cfg = cfg.get("discord_webhook", {})
         dc_url = os.environ.get("DISCORD_WEBHOOK_URL") or dc_cfg.get("webhook_url")
-        if (dc_cfg.get("enabled", False) or os.environ.get("DISCORD_WEBHOOK_URL")) and dc_url:
+        if enabled("notify_discord") and (dc_cfg.get("enabled", False) or os.environ.get("DISCORD_WEBHOOK_URL")) and dc_url:
             try:
                 results["discord"] = await self._send_discord(dc_url, alert)
             except Exception as e:
@@ -106,35 +110,38 @@ class AlertDispatcher:
         # 4. Dispatch to Slack Webhook
         sl_cfg = cfg.get("slack_webhook", {})
         sl_url = os.environ.get("SLACK_WEBHOOK_URL") or sl_cfg.get("webhook_url")
-        if (sl_cfg.get("enabled", False) or os.environ.get("SLACK_WEBHOOK_URL")) and sl_url:
+        if enabled("notify_slack") and (sl_cfg.get("enabled", False) or os.environ.get("SLACK_WEBHOOK_URL")) and sl_url:
             try:
                 results["slack"] = await self._send_slack(sl_url, alert)
             except Exception as e:
                 print(f"[AlertDispatcher] Slack dispatch error: {e}")
 
         # 5. Log to PostgreSQL tactical_alerts
-        try:
-            results["db_logged"] = await self._log_to_db(alert)
-        except Exception as e:
-            print(f"[AlertDispatcher] DB log error: {e}")
+        if enabled("notify_alert_log"):
+            try:
+                results["db_logged"] = await self._log_to_db(alert)
+            except Exception as e:
+                print(f"[AlertDispatcher] DB log error: {e}")
 
         # 6. Broadcast to ATAK via Cursor-on-Target (CoT)
-        try:
-            from ..cot.engine import cot_engine
-            cot_engine.broadcast_alert(alert.to_dict())
-            results["atak_cot"] = True
-        except Exception as e:
-            print(f"[AlertDispatcher] CoT dispatch error: {e}")
-            results["atak_cot"] = False
+        results["atak_cot"] = False
+        if enabled("cot_atak"):
+            try:
+                from ..cot.engine import cot_engine
+                cot_engine.broadcast_alert(alert.to_dict())
+                results["atak_cot"] = True
+            except Exception as e:
+                print(f"[AlertDispatcher] CoT dispatch error: {e}")
 
         # 7. Broadcast to Meshtastic LoRa Tactical Mesh
-        try:
-            from ..meshtastic.engine import meshtastic_engine
-            meshtastic_engine.broadcast_alert(alert.to_dict())
-            results["meshtastic_lora"] = True
-        except Exception as e:
-            print(f"[AlertDispatcher] Meshtastic dispatch error: {e}")
-            results["meshtastic_lora"] = False
+        results["meshtastic_lora"] = False
+        if enabled("meshtastic_relay"):
+            try:
+                from ..meshtastic.engine import meshtastic_engine
+                meshtastic_engine.broadcast_alert(alert.to_dict())
+                results["meshtastic_lora"] = True
+            except Exception as e:
+                print(f"[AlertDispatcher] Meshtastic dispatch error: {e}")
 
         print(f"[AlertDispatcher] Dispatched [{alert.severity}] '{alert.title}' -> {results}")
         return results

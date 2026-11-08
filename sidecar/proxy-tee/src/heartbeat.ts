@@ -6,6 +6,12 @@ import {
   normalizeFirms,
   normalizeCelestrakTle,
 } from './normalizer.js';
+import { features } from './features.js';
+
+/** A poll runs only when keep-alive and the matching ingest feature are both enabled. */
+function pollAllowed(ingestFeature: string): boolean {
+  return features.isEnabled('headless_keepalive') && features.isEnabled(ingestFeature);
+}
 
 export class HeartbeatManager {
   private upstreamUrl: string;
@@ -74,6 +80,7 @@ export class HeartbeatManager {
   }
 
   private async pollFlights(): Promise<void> {
+    if (!pollAllowed('ingest_flights')) return;
     if (!this.isHeadlessMode()) return; // Browser is active and polling, skip to avoid duplicate quota
     try {
       const res = await fetch(`${this.upstreamUrl}/api/flights`);
@@ -91,6 +98,7 @@ export class HeartbeatManager {
   }
 
   private async pollVessels(): Promise<void> {
+    if (!pollAllowed('ingest_vessels')) return;
     if (!this.isHeadlessMode()) return;
     try {
       const res = await fetch(`${this.upstreamUrl}/api/vessels`);
@@ -108,6 +116,7 @@ export class HeartbeatManager {
   }
 
   private async pollFirms(): Promise<void> {
+    if (!pollAllowed('ingest_wildfires')) return;
     if (!this.isHeadlessMode()) return;
     try {
       const res = await fetch(`${this.upstreamUrl}/api/firms`);
@@ -125,6 +134,7 @@ export class HeartbeatManager {
   }
 
   private async pollCelestrak(): Promise<void> {
+    if (!pollAllowed('ingest_satellite_tles')) return;
     const groups = ['active', 'stations', 'visual'];
     for (const g of groups) {
       try {

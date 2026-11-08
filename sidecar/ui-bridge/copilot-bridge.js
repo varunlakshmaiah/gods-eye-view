@@ -12,6 +12,62 @@
   const MAX_RECONNECT_DELAY = 15000;
   const ESCORT_PREFIX = 'gev_escort_';
 
+  // Sidecar feature flags (sidecar/config/features.json). Unknown features default to on.
+  let sidecarFeatures = {};
+  const featureOn = (id) => sidecarFeatures[id] !== false;
+
+  async function loadFeatures() {
+    const host = window.location.hostname || 'localhost';
+    for (const url of ['/__sidecar/features', `http://${host}:${GATEWAY_WS_PORT}/api/features`]) {
+      try {
+        const res = await fetch(url, { cache: 'no-store' });
+        if (!res.ok) continue;
+        const data = await res.json();
+        if (Array.isArray(data.features)) {
+          sidecarFeatures = Object.fromEntries(data.features.map((f) => [f.id, f.enabled]));
+        } else if (data.features && typeof data.features === 'object') {
+          sidecarFeatures = data.features;
+        }
+        return;
+      } catch (e) {}
+    }
+  }
+
+  // Hide visuals for features switched off at runtime and re-sync those switched back on.
+  async function applyFeatureState(next) {
+    const prev = sidecarFeatures;
+    sidecarFeatures = next || {};
+    const turnedOn = (id) => prev[id] === false && featureOn(id);
+    console.log('%c[GodsEyeSidecar]%c Feature flags updated', 'color: #00ffcc; font-weight: bold;', 'color: inherit;', sidecarFeatures);
+
+    // Only force layers off, or back on after a real off->on transition, so
+    // unrelated flag changes don't override layers the user hid on purpose.
+    if (aoiDataSource && (!featureOn('aoi_management') || turnedOn('aoi_management'))) {
+      aoiDataSource.show = featureOn('aoi_management');
+    }
+    if (radarDataSource && (!featureOn('radar_horizons') || turnedOn('radar_horizons'))) {
+      radarDataSource.show = featureOn('radar_horizons');
+    }
+
+    const escortOff = !featureOn('escort_bubbles');
+    if (escortOff || turnedOn('escort_bubbles')) {
+      if (escortOff && activeFollowVehicleId) stopTrackingVehicle();
+      if (escortOff) document.getElementById('sidecar-escort-hud')?.remove();
+      const viewer = await waitForViewer(2000);
+      viewer?.entities?.values
+        .filter((e) => typeof e.id === 'string' && e.id.startsWith(ESCORT_PREFIX))
+        .forEach((e) => { e.show = !escortOff; });
+      viewer?.scene?.requestRender?.();
+    }
+    if (!featureOn('notify_browser_hud')) {
+      document.getElementById('sidecar-tactical-banner')?.remove();
+    }
+
+    if (turnedOn('aoi_management')) syncAoiVisuals();
+    if (turnedOn('radar_horizons')) syncRadarVisuals();
+    if (turnedOn('escort_bubbles')) syncEscortVisuals();
+  }
+
   function toRadians(degrees) {
     return (degrees * Math.PI) / 180.0;
   }
@@ -212,6 +268,8 @@
             renderAois(msg.aois);
           } else if (msg.type === 'escort_sync') {
             renderEscortBubbles(msg.devices);
+          } else if (msg.type === 'feature_sync') {
+            applyFeatureState(msg.features);
           }
         } catch (err) {
           console.warn('[GodsEyeSidecar] Error parsing message:', err);
@@ -555,7 +613,7 @@
     console.warn('%c[TACTICAL ALERT]%c ' + alert.title, 'color: #ff0055; font-weight: bold; background: #220011; padding: 2px 6px;', 'color: inherit;', alert);
 
     // 1. Request Notification permission if needed and trigger native Desktop Notification
-    if ('Notification' in window) {
+    if (featureOn('notify_desktop') && 'Notification' in window) {
       if (Notification.permission === 'default') {
         Notification.requestPermission();
       }
@@ -570,7 +628,9 @@
     }
 
     // 2. Render Tactical HUD Banner on Cesium Canvas
-    renderAlertBanner(alert);
+    if (featureOn('notify_browser_hud')) {
+      renderAlertBanner(alert);
+    }
   }
 
   function renderAlertBanner(alert) {
@@ -694,6 +754,7 @@
     if (aois && Array.isArray(aois)) {
       cachedAois = aois;
     }
+    if (!featureOn('aoi_management')) return;
     const viewer = await waitForViewer(12000);
     const { gev } = getCesiumGlobals();
     const Cesium = window.Cesium;
@@ -775,6 +836,7 @@
   }
 
   async function syncAoiVisuals() {
+    if (!featureOn('aoi_management')) return;
     try {
       const host = window.location.hostname || 'localhost';
       const res = await fetch(`http://${host}:8000/api/aois`);
@@ -794,6 +856,7 @@
     if (stations && Array.isArray(stations)) {
       cachedRadarStations = stations;
     }
+    if (!featureOn('radar_horizons')) return;
     const viewer = await waitForViewer(12000);
     const { gev } = getCesiumGlobals();
     const Cesium = window.Cesium;
@@ -922,6 +985,7 @@
   }
 
   async function syncRadarVisuals() {
+    if (!featureOn('radar_horizons')) return;
     try {
       const host = window.location.hostname || 'localhost';
       const res = await fetch(`http://${host}:8000/api/radar/stations`);
@@ -1107,6 +1171,7 @@
     if (devices && Array.isArray(devices)) {
       cachedEscortDevices = devices;
     }
+    if (!featureOn('escort_bubbles')) return;
     // Immediately render on-screen HUD
     renderEscortHud(cachedEscortDevices);
 
@@ -1865,6 +1930,7 @@
   }
 
   async function syncEscortVisuals() {
+    if (!featureOn('escort_bubbles')) return;
     try {
       const host = window.location.hostname || 'localhost';
       let res = await fetch('/api/escort/devices').catch(() => null);
@@ -1927,18 +1993,18 @@
     sendViewportUpdate();
   }, 4000);
 
-  // Connect when DOM ready
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
+  // Load feature flags, then connect when DOM ready
+  const start = () => {
+    loadFeatures().finally(() => {
       connect();
       syncAoiVisuals();
       syncRadarVisuals();
       syncEscortVisuals();
     });
+  };
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', start);
   } else {
-    connect();
-    syncAoiVisuals();
-    syncRadarVisuals();
-    syncEscortVisuals();
+    start();
   }
 })();
